@@ -1,0 +1,2 @@
+[functions.send-premium-webhook]
+verify_jwt = false
