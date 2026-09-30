@@ -1,9 +1,17 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+};
+
+type PremiumWebhookRequest = {
+  email: string;
+  plan: 'Monthly' | 'Yearly';
+  amount: number;
+  currency: string;
+  timestamp: string;
 };
 
 Deno.serve(async (req: Request) => {
@@ -20,27 +28,38 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const body = await req.json();
-    const { email, plan, amount, currency } = body;
+    const body = await req.json() as Partial<PremiumWebhookRequest>;
+    const { email, plan, amount, currency, timestamp } = body;
 
-    if (!email || !plan) {
+    if (
+      typeof email !== "string" || !email.includes("@") ||
+      (plan !== "Monthly" && plan !== "Yearly") ||
+      typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 ||
+      typeof currency !== "string" || currency.length !== 3 ||
+      typeof timestamp !== "string" || !Number.isFinite(Date.parse(timestamp))
+    ) {
       return new Response(
-        JSON.stringify({ error: "Missing required fields: email, plan" }),
+        JSON.stringify({ error: "Invalid premium subscription payload" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     const payload = {
       event: "premium_subscription_activated",
+      email,
+      plan,
+      amount,
+      currency,
+      timestamp,
       user: {
         email,
       },
       subscription: {
         plan,
-        amount: amount ?? 19,
-        currency: currency ?? "USD",
+        amount,
+        currency,
       },
-      purchased_at: new Date().toISOString(),
+      purchased_at: timestamp,
     };
 
     const webhookResponse = await fetch(webhookUrl, {

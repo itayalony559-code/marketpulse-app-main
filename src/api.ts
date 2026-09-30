@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Real-time market data API module.
  *
@@ -11,12 +10,44 @@
  */
 
 import { news as staticNews } from '@/data/news';
+import type {
+  HistoricalPrice,
+  LiveNewsItem,
+  LiveQuote,
+  NewsArticle,
+  StockSearchResult,
+} from '@/types';
+export type { LiveNewsItem, LiveQuote } from '@/types';
+
+type CacheEntry<T> = { value: T; expiresAt: number };
+type FinnhubNews = {
+  id?: number;
+  headline?: string;
+  summary?: string;
+  source?: string;
+  url?: string;
+  datetime?: number;
+  related?: string;
+};
+type FinnhubSearchResult = { symbol: string; displaySymbol: string; description: string };
 
 const FINNHUB_BASE = 'https://finnhub.io/api/v1';
 const FINNHUB_KEY = import.meta.env.VITE_FINNHUB_API_KEY ?? '';
+const QUOTE_CACHE_TTL_MS = 60_000;
+const NEWS_CACHE_TTL_MS = 180_000;
+const COMPANY_NEWS_CACHE_TTL_MS = 180_000;
+const HISTORICAL_CACHE_TTL_MS = 300_000;
+const quoteCache = new Map<string, CacheEntry<LiveQuote | null>>();
+const quoteRequests = new Map<string, Promise<LiveQuote | null>>();
+const newsCache = new Map<number, CacheEntry<LiveNewsItem[]>>();
+const newsRequests = new Map<number, Promise<LiveNewsItem[]>>();
+const companyNewsCache = new Map<string, CacheEntry<LiveNewsItem[]>>();
+const companyNewsRequests = new Map<string, Promise<LiveNewsItem[]>>();
+const historicalCache = new Map<string, CacheEntry<HistoricalPrice[]>>();
+const historicalRequests = new Map<string, Promise<HistoricalPrice[]>>();
 
 /** Build a Finnhub-compatible symbol for international stocks. */
-function toFinnhubSymbol(symbol) {
+function toFinnhubSymbol(symbol: string): string {
   if (symbol.endsWith('.L')) return symbol.slice(0, -2) + '.L';
   if (symbol.endsWith('.T')) return symbol.slice(0, -2) + '.T';
   if (symbol.endsWith('.HK')) return symbol.slice(0, -3) + '.HK';
@@ -46,23 +77,25 @@ function toFinnhubSymbol(symbol) {
  * Fetch a live quote for a single stock symbol from Finnhub.
  * Returns null if the API is unavailable or the symbol is not found.
  */
-export async function fetchQuote(symbol) {
+export async function fetchQuote(symbol: string): Promise<LiveQuote | null> {
   if (!FINNHUB_KEY) return null;
   try {
     const fhSymbol = toFinnhubSymbol(symbol);
     const url = `${FINNHUB_BASE}/quote?symbol=${encodeURIComponent(fhSymbol)}&token=${FINNHUB_KEY}`;
     const res = await fetch(url);
     if (!res.ok) return null;
-    const data = await res.json();
+    const data = await res.json() as Record<string, number | null | undefined>;
     if (!data || !Number.isFinite(Number(data.c)) || Number(data.c) <= 0) return null;
     const profile = await fetch(
       `${FINNHUB_BASE}/stock/profile2?symbol=${encodeURIComponent(fhSymbol)}&token=${FINNHUB_KEY}`,
     )
-      .then((response) => (response.ok ? response.json() : null))
+      .then((response) => response.ok
+        ? response.json() as Promise<{ marketCapitalization?: number }>
+        : null)
       .catch(() => null);
     return {
       symbol,
-      price: data.c,
+      price: Number(data.c),
       change: data.d ?? 0,
       changePercent: data.dp ?? 0,
       previousClose: data.pc ?? 0,
@@ -83,93 +116,163 @@ export async function fetchQuote(symbol) {
  * Fetch live quotes for multiple stock symbols in parallel.
  * Returns a map of symbol -> LiveQuote (only for symbols that succeeded).
  */
-export async function fetchQuotes(symbols) {
+export async function fetchQuotes(symbols: string[]): Promise<Record<string, LiveQuote>> {
   if (!FINNHUB_KEY || symbols.length === 0) return {};
-  const results = await Promise.all(
-    symbols.map(async (s) => {
-      const q = await fetchQuote(s);
-      return q ? [s, q] : null;
-    }),
-  );
-  const map = {};
+  const now = Date.now();
+  const results = await Promise.all(symbols.map(async (symbol) => {
+    const cached = quoteCache.get(symbol);
+    if (cached && cached.expiresAt > now) return cached.value ? [symbol, cached.value] as const : null;
+
+    let request = quoteRequests.get(symbol);
+    if (!request) {
+      request = fetchQuote(symbol).then((quote) => {
+        quoteCache.set(symbol, { value: quote, expiresAt: Date.now() + QUOTE_CACHE_TTL_MS });
+        return quote;
+      }).finally(() => quoteRequests.delete(symbol));
+      quoteRequests.set(symbol, request);
+    }
+    const quote = await request;
+    return quote ? [symbol, quote] as const : null;
+  }));
+  const map: Record<string, LiveQuote> = {};
   for (const r of results) {
     if (r) map[r[0]] = r[1];
   }
   return map;
 }
 
-function toLiveNews(n) {
+function toLiveNews(article: NewsArticle): LiveNewsItem {
   return {
-    id: n.id,
-    headline: n.headline,
-    summary: n.summary,
-    body: n.body ?? [],
-    source: n.source,
+    id: article.id,
+    headline: article.headline,
+    summary: article.summary,
+    body: article.body,
+    source: article.source,
     url: '',
-    publishedAt: n.publishedAt ?? '',
-    minutesAgo: n.publishedAt
-      ? Math.max(0, Math.floor((Date.now() - new Date(n.publishedAt).getTime()) / 60000))
+    publishedAt: article.publishedAt,
+    minutesAgo: article.publishedAt
+      ? Math.max(0, Math.floor((Date.now() - new Date(article.publishedAt).getTime()) / 60000))
       : 0,
-    tickers: n.tickers ?? [],
+    tickers: article.tickers,
     premium: false,
-    category: n.category ?? 'Markets',
-    sentiment: n.sentiment ?? 'neutral',
+    category: article.category,
+    sentiment: article.sentiment,
   };
+}
+
+function fallbackNews(limit: number): LiveNewsItem[] {
+  const articles = staticNews.slice(0, limit).map(toLiveNews);
+  newsCache.set(limit, { value: articles, expiresAt: Date.now() + NEWS_CACHE_TTL_MS });
+  return articles;
 }
 
 /**
  * Fetch general market news from Finnhub.
  * Falls back to static news when the API is unavailable.
  */
-export async function fetchMarketNews(limit = 20) {
+export async function fetchMarketNews(limit = 20): Promise<LiveNewsItem[]> {
   if (!FINNHUB_KEY) return staticNews.slice(0, limit).map(toLiveNews);
+  const cached = newsCache.get(limit);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const pending = newsRequests.get(limit);
+  if (pending) return pending;
+
+  const request = loadMarketNews(limit);
+  newsRequests.set(limit, request);
   try {
-    const url = `${FINNHUB_BASE}/news?category=general&token=${FINNHUB_KEY}`;
-    const res = await fetch(url);
-    if (!res.ok) return staticNews.slice(0, limit).map(toLiveNews);
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return staticNews.slice(0, limit).map(toLiveNews);
-    return data.slice(0, limit).map((item) => ({
-      id: String(item.id ?? Math.random()),
-      headline: item.headline ?? '',
-      summary: item.summary ?? '',
-      source: item.source ?? 'Unknown',
-      url: item.url ?? '',
-      publishedAt: new Date((item.datetime ?? 0) * 1000).toISOString(),
-      tickers: Array.isArray(item.related) ? item.related.slice(0, 5) : [],
-      category: 'Markets',
-    }));
-  } catch {
-    return staticNews.slice(0, limit).map(toLiveNews);
+    return await request;
+  } finally {
+    newsRequests.delete(limit);
   }
 }
 
-export async function getCompanyNews(symbol, limit = 20) {
-  const fallback = () => staticNews.filter((article) => article.tickers.includes(symbol)).slice(0, limit);
+async function loadMarketNews(limit: number): Promise<LiveNewsItem[]> {
+  try {
+    const url = `${FINNHUB_BASE}/news?category=general&token=${FINNHUB_KEY}`;
+    const res = await fetch(url);
+    if (!res.ok) return fallbackNews(limit);
+    const data = await res.json() as FinnhubNews[];
+    if (!Array.isArray(data) || data.length === 0) return fallbackNews(limit);
+    const articles: LiveNewsItem[] = data.slice(0, limit).map((item) => ({
+      id: String(item.id ?? item.url ?? `${item.datetime ?? 0}-${item.headline ?? ''}`),
+      headline: item.headline ?? '',
+      summary: item.summary ?? '',
+      body: [],
+      source: item.source ?? 'Unknown',
+      url: item.url ?? '',
+      publishedAt: new Date((item.datetime ?? 0) * 1000).toISOString(),
+      minutesAgo: item.datetime ? Math.max(0, Math.floor((Date.now() - item.datetime * 1000) / 60000)) : 0,
+      tickers: typeof item.related === 'string' ? item.related.split(',').filter(Boolean).slice(0, 5) : [],
+      premium: false,
+      category: 'Markets',
+      sentiment: 'neutral',
+    }));
+    newsCache.set(limit, { value: articles, expiresAt: Date.now() + NEWS_CACHE_TTL_MS });
+    return articles;
+  } catch {
+    return fallbackNews(limit);
+  }
+}
+
+export async function getCompanyNews(symbol: string, limit = 20): Promise<LiveNewsItem[]> {
+  const key = `${symbol.toUpperCase()}:${limit}`;
+  const fallback = () => staticNews
+    .filter((article) => article.tickers.includes(symbol))
+    .slice(0, limit)
+    .map(toLiveNews);
   if (!FINNHUB_KEY) return fallback();
 
+  const cached = companyNewsCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const pending = companyNewsRequests.get(key);
+  if (pending) return pending;
+
+  const request = loadCompanyNews(symbol, limit, fallback);
+  companyNewsRequests.set(key, request);
+  try {
+    const articles = await request;
+    companyNewsCache.set(key, { value: articles, expiresAt: Date.now() + COMPANY_NEWS_CACHE_TTL_MS });
+    return articles;
+  } finally {
+    companyNewsRequests.delete(key);
+  }
+}
+
+async function loadCompanyNews(
+  symbol: string,
+  limit: number,
+  fallback: () => LiveNewsItem[],
+): Promise<LiveNewsItem[]> {
   const end = new Date();
   const start = new Date(end);
   start.setDate(end.getDate() - 7);
-  const formatDate = (date) => date.toISOString().slice(0, 10);
+  const formatDate = (date: Date) => date.toISOString().slice(0, 10);
 
   try {
     const fhSymbol = toFinnhubSymbol(symbol);
     const url = `${FINNHUB_BASE}/company-news?symbol=${encodeURIComponent(fhSymbol)}&from=${formatDate(start)}&to=${formatDate(end)}&token=${FINNHUB_KEY}`;
     const res = await fetch(url);
     if (!res.ok) return fallback();
-    const data = await res.json();
+    const data = await res.json() as FinnhubNews[];
     if (!Array.isArray(data)) return [];
 
-    return data.slice(0, limit).map((item) => toLiveNews({
-      id: String(item.id ?? item.url ?? Math.random()),
-      headline: item.headline ?? '',
-      summary: item.summary ?? '',
-      source: item.source ?? 'Unknown',
-      publishedAt: item.datetime ? new Date(item.datetime * 1000).toISOString() : '',
-      tickers: [symbol],
-      category: 'Markets',
-    }));
+    return data.slice(0, limit).map((item): LiveNewsItem => {
+      const publishedAt = item.datetime ? new Date(item.datetime * 1000).toISOString() : '';
+      return {
+        id: String(item.id ?? item.url ?? `${item.datetime ?? 0}-${item.headline ?? ''}`),
+        headline: item.headline ?? '',
+        summary: item.summary ?? '',
+        body: [],
+        source: item.source ?? 'Unknown',
+        url: item.url ?? '',
+        publishedAt,
+        minutesAgo: publishedAt ? Math.max(0, Math.floor((Date.now() - Date.parse(publishedAt)) / 60_000)) : 0,
+        tickers: [symbol],
+        premium: false,
+        category: 'Markets',
+        sentiment: 'neutral',
+      };
+    });
   } catch {
     return fallback();
   }
@@ -178,7 +281,7 @@ export async function getCompanyNews(symbol, limit = 20) {
 export function hasApiKey() {
   return Boolean(FINNHUB_KEY);
 }
-export async function searchStocks(query: string) {
+export async function searchStocks(query: string): Promise<StockSearchResult[]> {
   if (!query || query.trim() === '') return [];
   const normalizedQuery = query.trim().toUpperCase();
   if (!FINNHUB_KEY) {
@@ -186,7 +289,7 @@ export async function searchStocks(query: string) {
   }
   try {
     const res = await fetch(`${FINNHUB_BASE}/search?q=${encodeURIComponent(query)}&token=${FINNHUB_KEY}`);
-    const data = await res.json();
+    const data = await res.json() as { result?: FinnhubSearchResult[] };
     return data.result || [];
   } catch (error) {
     console.error('Error searching stocks:', error);
@@ -194,11 +297,32 @@ export async function searchStocks(query: string) {
   }
 }
 
-export async function getStockQuote(symbol: string) {
+export async function getStockQuote(symbol: string): Promise<LiveQuote | null> {
   return fetchQuote(symbol);
 }
 
-export async function getHistoricalPrices(symbol: string, range: string) {
+export async function getHistoricalPrices(symbol: string, range: string): Promise<HistoricalPrice[]> {
+  if (!FINNHUB_KEY) return [];
+  const cacheKey = `${symbol}:${range}`;
+  const cached = historicalCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const pending = historicalRequests.get(cacheKey);
+  if (pending) return pending;
+
+  const request = loadHistoricalPrices(symbol, range);
+  historicalRequests.set(cacheKey, request);
+  try {
+    const points = await request;
+    if (points.length > 0) {
+      historicalCache.set(cacheKey, { value: points, expiresAt: Date.now() + HISTORICAL_CACHE_TTL_MS });
+    }
+    return points;
+  } finally {
+    historicalRequests.delete(cacheKey);
+  }
+}
+
+async function loadHistoricalPrices(symbol: string, range: string): Promise<HistoricalPrice[]> {
   if (!FINNHUB_KEY) return [];
 
   const now = Math.floor(Date.now() / 1000);
@@ -216,12 +340,14 @@ export async function getHistoricalPrices(symbol: string, range: string) {
     const url = `${FINNHUB_BASE}/stock/candle?symbol=${encodeURIComponent(fhSymbol)}&resolution=${rangeConfig.resolution}&from=${now - rangeConfig.seconds}&to=${now}&token=${FINNHUB_KEY}`;
     const res = await fetch(url);
     if (!res.ok) return [];
-    const data = await res.json();
-    if (data?.s !== 'ok' || !Array.isArray(data.c) || !Array.isArray(data.t)) return [];
+    const data = await res.json() as { s?: string; c?: number[]; t?: number[] };
+    const prices = data.c;
+    const timestamps = data.t;
+    if (data.s !== 'ok' || !Array.isArray(prices) || !Array.isArray(timestamps)) return [];
 
-    return data.c
+    return prices
       .map((price, index) => ({
-        time: new Date(data.t[index] * 1000).toLocaleDateString('en-US', {
+        time: new Date(timestamps[index] * 1000).toLocaleDateString('en-US', {
           month: 'short',
           day: 'numeric',
         }),

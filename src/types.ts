@@ -79,6 +79,43 @@ export type MarketIndex = {
 
 export type NewsSentiment = 'positive' | 'negative' | 'neutral';
 
+export type RiskLevel = 'conservative' | 'moderate' | 'aggressive';
+
+export type RiskProfile = {
+  score: number;
+  level: RiskLevel;
+  updatedAt: string;
+};
+
+export type RiskProfileContextType = {
+  profile: RiskProfile | null;
+  saveProfile: (profile: RiskProfile) => Promise<void>;
+  clearProfile: () => Promise<void>;
+};
+
+export type LiveQuote = {
+  symbol: string;
+  price: number;
+  change: number;
+  changePercent: number;
+  previousClose: number;
+  high: number;
+  low: number;
+  open: number;
+  preMarketPrice?: number | null;
+  afterHoursPrice?: number | null;
+  volume?: number;
+  marketCap?: number;
+};
+
+export type HistoricalPrice = { time: string; price: number };
+
+export type StockSearchResult = {
+  symbol: string;
+  displaySymbol: string;
+  description: string;
+};
+
 export type NewsArticle = {
   id: string;
   headline: string;
@@ -93,6 +130,8 @@ export type NewsArticle = {
   sentiment: NewsSentiment;
 };
 
+export type LiveNewsItem = NewsArticle & { url: string };
+
 export type ChartPoint = {
   time: string;
   price: number;
@@ -104,6 +143,6 @@ export type MarketSession = 'PRE-MARKET' | 'OPEN' | 'AFTER-HOURS' | 'CLOSED';
 
 export type SubscriptionContextType = {
   isPremium: boolean;
-  activatePremium: (email?: string) => Promise<void>;
+  activatePremium: (email: string, plan: 'Monthly' | 'Yearly') => Promise<boolean>;
   resetPremium: () => void;
 };

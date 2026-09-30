@@ -32,28 +32,31 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
   }, [isPremium]);
 
-  const activatePremium = useCallback(async (email?: string) => {
+  const activatePremium = useCallback(async (email: string, plan: 'Monthly' | 'Yearly') => {
     setIsPremium(true);
 
     try {
       const { VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY } = import.meta.env;
+      if (!VITE_SUPABASE_URL || !VITE_SUPABASE_ANON_KEY) return false;
       const functionUrl = `${VITE_SUPABASE_URL}/functions/v1/send-premium-webhook`;
 
-      await fetch(functionUrl, {
+      const response = await fetch(functionUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${VITE_SUPABASE_ANON_KEY}`,
         },
         body: JSON.stringify({
-          email: email || 'guest@marketpulse.app',
-          plan: 'Premium',
-          amount: 19,
+          email,
+          plan,
+          amount: plan === 'Monthly' ? 19 : 190,
           currency: 'USD',
+          timestamp: new Date().toISOString(),
         }),
       });
+      return response.ok;
     } catch {
-      /* webhook failure should not block the upgrade */
+      return false;
     }
   }, []);
 

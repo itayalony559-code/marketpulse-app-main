@@ -8,25 +8,62 @@ import { useWatchlist } from '@/context/WatchlistContext';
 import { useLanguage } from '@/context/LanguageContext';
 import { getMarketIndexes, getNews, getAsset } from '@/services/marketService';
 import { useLiveQuotes } from '@/hooks/useLiveQuotes';
-import { hasApiKey } from '@/api';
-import { useEffect, useMemo, useState } from 'react';
+import { fetchMarketNews, hasApiKey, type LiveNewsItem } from '@/api';
+import type { NewsArticle } from '@/types';
+import { useEffect, useState } from 'react';
+
+function toNewsArticle(item: LiveNewsItem): NewsArticle {
+  const publishedAt = item.publishedAt || new Date().toISOString();
+  const publishedTime = new Date(publishedAt).getTime();
+  const category = ['Markets', 'Technology', 'Earnings', 'Economy', 'Crypto'].includes(item.category)
+    ? item.category as NewsArticle['category']
+    : 'Markets';
+
+  return {
+    id: item.id,
+    headline: item.headline,
+    summary: item.summary,
+    body: item.body ?? [],
+    source: item.source,
+    publishedAt,
+    minutesAgo: item.minutesAgo ?? (Number.isFinite(publishedTime)
+      ? Math.max(0, Math.floor((Date.now() - publishedTime) / 60_000))
+      : 0),
+    tickers: item.tickers,
+    premium: item.premium ?? false,
+    category,
+    sentiment: item.sentiment ?? 'neutral',
+  };
+}
 
 export function HomePage() {
   const { watchlist } = useWatchlist();
   const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
+  const [newsLoading, setNewsLoading] = useState(true);
+  const [news, setNews] = useState<NewsArticle[]>(getNews());
 
   useEffect(() => {
     const t = setTimeout(() => setLoading(false), 500);
     return () => clearTimeout(t);
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    fetchMarketNews(20)
+      .then((items) => {
+        if (active) setNews(items.map(toNewsArticle));
+      })
+      .finally(() => {
+        if (active) setNewsLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
   // Fetch live quotes for watchlist symbols
   const { assets: liveAssets, loading: quotesLoading, live } = useLiveQuotes(watchlist);
 
   const indexes = getMarketIndexes();
-  const news = getNews();
-
   const watchlistAssets = watchlist
     .map((s) => liveAssets.find((a) => a.symbol === s) ?? getAsset(s))
     .filter((a): a is NonNullable<typeof a> => Boolean(a))
@@ -129,7 +166,7 @@ export function HomePage() {
             {t('latestNews')}
           </h2>
         </div>
-        {loading ? (
+        {newsLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 3 }).map((_, i) => (
               <NewsCardSkeleton key={i} />

@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, TrendingUp, Gauge, Target, ChevronRight, RotateCcw, Check } from 'lucide-react';
 import { getAsset } from '@/services/marketService';
 import { AssetRow } from '@/components/AssetRow';
 import { useLanguage } from '@/context/LanguageContext';
+import { useRiskProfile } from '@/context/RiskProfileContext';
 import { DisclaimerBanner } from '@/components/Disclaimer';
-
-type RiskLevel = 'conservative' | 'moderate' | 'aggressive';
+import type { RiskLevel } from '@/types';
 
 type Question = {
   id: string;
@@ -55,50 +55,60 @@ const QUESTIONS: Question[] = [
       { label: 'Advanced — I actively trade and research', value: 3 },
     ],
   },
+];
+
+const HEBREW_QUESTIONS = [
   {
-    id: 'allocation',
-    text: 'What percentage of your savings are you willing to invest in stocks?',
-    options: [
-      { label: 'Under 20%', value: 0 },
-      { label: '20% to 40%', value: 1 },
-      { label: '40% to 70%', value: 2 },
-      { label: 'Over 70%', value: 3 },
-    ],
+    text: 'לכמה זמן את/ה מתכנן/ת להחזיק בהשקעות שלך?',
+    options: ['פחות משנה', 'שנה עד 3 שנים', '3 עד 5 שנים', 'יותר מ-5 שנים'],
+  },
+  {
+    text: 'אם התיק שלך ירד ב-20% בחודש, מה תעשה/י?',
+    options: ['אמכור הכול כדי לעצור את ההפסד', 'אמכור חלק מהפוזיציות', 'אחזיק ואמתין להתאוששות', 'אקנה עוד בירידה'],
+  },
+  {
+    text: 'מה הכי חשוב לך?',
+    options: ['שמירה על ההון', 'צמיחה יציבה בסיכון נמוך', 'איזון בין צמיחה להכנסה', 'תשואה מרבית גם בתנודתיות'],
+  },
+  {
+    text: 'איך היית מתאר/ת את הניסיון שלך בהשקעות?',
+    options: ['מתחיל/ה, רק נכנס/ת לתחום', 'ניסיון בסיסי במניות', 'ניסיון במספר מגזרים', 'מתקדם/ת, סוחר/ת וחוקר/ת באופן פעיל'],
   },
 ];
 
-const STORAGE_KEY = 'marketpulse_risk_profile';
-
-const RISK_LEVELS: Record<RiskLevel, { label: string; min: number; max: number; description: string; icon: typeof Shield; color: string }> = {
+const RISK_LEVELS: Record<RiskLevel, { label: string; min: number; max: number; description: string; descriptionHe: string; icon: typeof Shield; color: string }> = {
   conservative: {
     label: 'Conservative',
     min: 0,
-    max: 6,
+    max: 4,
     description: 'You prefer stability and capital protection. Your recommendations focus on large-cap, lower-volatility stocks with steady performance.',
+    descriptionHe: 'יציבות ושמירה על ההון הן בעדיפות. ההמלצות מתמקדות בחברות גדולות ובתנודתיות נמוכה יחסית.',
     icon: Shield,
     color: 'text-bull',
   },
   moderate: {
     label: 'Moderate',
-    min: 7,
-    max: 10,
+    min: 5,
+    max: 8,
     description: 'You seek a balance between growth and safety. Your recommendations include a mix of established growth stocks and stable blue-chips.',
+    descriptionHe: 'איזון בין צמיחה לביטחון. ההמלצות משלבות חברות צמיחה מבוססות ומניות יציבות.',
     icon: Gauge,
     color: 'text-gold-400',
   },
   aggressive: {
     label: 'Aggressive',
-    min: 11,
-    max: 15,
+    min: 9,
+    max: 12,
     description: 'You are comfortable with high volatility in exchange for maximum growth potential. Your recommendations focus on high-momentum, high-beta stocks.',
+    descriptionHe: 'נוחות עם תנודתיות גבוהה תמורת פוטנציאל צמיחה. ההמלצות מתמקדות במניות בעלות מומנטום ותנודתיות גבוהים.',
     icon: TrendingUp,
     color: 'text-bear',
   },
 };
 
 function scoreToLevel(score: number): RiskLevel {
-  if (score <= 6) return 'conservative';
-  if (score <= 10) return 'moderate';
+  if (score <= 4) return 'conservative';
+  if (score <= 8) return 'moderate';
   return 'aggressive';
 }
 
@@ -115,52 +125,54 @@ function getRecommendedSymbols(level: RiskLevel): string[] {
 
 export function RiskProfilePage() {
   const navigate = useNavigate();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const { profile: savedProfile, saveProfile, clearProfile } = useRiskProfile();
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [currentQ, setCurrentQ] = useState(0);
-  const [completed, setCompleted] = useState(false);
-  const [savedProfile, setSavedProfile] = useState<{ score: number; level: RiskLevel } | null>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [completed, setCompleted] = useState(Boolean(savedProfile));
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    if (savedProfile) setCompleted(true);
+  }, [savedProfile]);
 
   const totalQuestions = QUESTIONS.length;
   const question = QUESTIONS[currentQ];
   const progress = completed ? 100 : (currentQ / totalQuestions) * 100;
 
-  const handleAnswer = (value: number) => {
+  const handleAnswer = async (value: number) => {
     const newAnswers = { ...answers, [question.id]: value };
     setAnswers(newAnswers);
 
     if (currentQ < totalQuestions - 1) {
       setTimeout(() => setCurrentQ(currentQ + 1), 200);
     } else {
-      const score = Object.values(newAnswers).reduce((a, b) => a + b, 0);
+      const score = Object.values(newAnswers).reduce((total, answer) => total + answer, 0);
       const level = scoreToLevel(score);
-      const profile = { score, level };
-      setSavedProfile(profile);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
-      } catch {
-        /* ignore */
-      }
+      const profile = { score, level, updatedAt: new Date().toISOString() };
+      setSaving(true);
+      setSaveError('');
       setCompleted(true);
+      try {
+        await saveProfile(profile);
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : 'Profile could not be saved to Supabase.');
+      } finally {
+        setSaving(false);
+      }
     }
   };
 
-  const reset = () => {
+  const reset = async () => {
     setAnswers({});
     setCurrentQ(0);
     setCompleted(false);
-    setSavedProfile(null);
+    setSaveError('');
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      await clearProfile();
     } catch {
-      /* ignore */
+      setSaveError(lang === 'he' ? 'לא ניתן למחוק את הפרופיל מ-Supabase.' : 'The Supabase profile could not be cleared.');
     }
   };
 
@@ -191,19 +203,21 @@ export function RiskProfilePage() {
           </p>
           <h1 className="mt-1 text-2xl font-bold text-white">{t(level)}</h1>
           <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-slate-400">
-            {config.description}
+            {lang === 'he' ? config.descriptionHe : config.description}
           </p>
           <div className="mt-4 flex items-center justify-center gap-2">
             <div className="flex h-2 w-32 overflow-hidden rounded-full bg-ink-800">
               <div
                 className={`h-full ${level === 'conservative' ? 'bg-bull' : level === 'moderate' ? 'bg-gold-400' : 'bg-bear'}`}
-                style={{ width: `${(savedProfile.score / 15) * 100}%` }}
+                style={{ width: `${(savedProfile.score / 12) * 100}%` }}
               />
             </div>
             <span className="tabular text-xs font-semibold text-slate-400">
-              {savedProfile.score}/15
+              {savedProfile.score}/12
             </span>
           </div>
+          {saving && <p role="status" className="mt-3 text-xs text-slate-400">{lang === 'he' ? 'שומר פרופיל...' : 'Saving profile...'}</p>}
+          {saveError && <p role="alert" className="mt-3 text-xs text-bear">{lang === 'he' ? 'הפרופיל נשמר במכשיר אך לא ב-Supabase: ' : 'Saved on this device, but not in Supabase: '}{saveError}</p>}
         </div>
 
         <div>
@@ -261,7 +275,9 @@ export function RiskProfilePage() {
       </p>
 
       <div className="surface p-5">
-        <h2 className="text-base font-semibold leading-snug text-white">{question.text}</h2>
+        <h2 className="text-base font-semibold leading-snug text-white">
+          {lang === 'he' ? HEBREW_QUESTIONS[currentQ].text : question.text}
+        </h2>
         <div className="mt-4 space-y-2">
           {question.options.map((opt) => {
             const isSelected = answers[question.id] === opt.value;
@@ -269,19 +285,23 @@ export function RiskProfilePage() {
               <button
                 key={opt.label}
                 onClick={() => handleAnswer(opt.value)}
-                className={`flex w-full items-center justify-between rounded-xl border p-3.5 text-left text-sm transition-all active:scale-[0.98] ${
+                className={`flex w-full items-center justify-between rounded-xl border p-3.5 text-start text-sm transition-all active:scale-[0.98] ${
                   isSelected
                     ? 'border-bull/40 bg-bull/10 text-white'
                     : 'border-ink-700 bg-ink-900 text-slate-300 hover:border-ink-600 hover:bg-ink-850'
                 }`}
               >
-                <span className="font-medium">{opt.label}</span>
+                <span className="font-medium">
+                  {lang === 'he' ? HEBREW_QUESTIONS[currentQ].options[question.options.indexOf(opt)] : opt.label}
+                </span>
                 {isSelected && <Check className="h-4 w-4 shrink-0 text-bull" />}
               </button>
             );
           })}
         </div>
       </div>
+
+      {saveError && <p role="alert" className="text-xs text-bear">{saveError}</p>}
 
       <DisclaimerBanner />
     </div>

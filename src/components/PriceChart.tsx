@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -24,7 +24,10 @@ type Props = {
 };
 
 export function calculatePeriodChange(startPrice: number | undefined, endPrice: number | undefined): number {
-  if (!Number.isFinite(startPrice) || startPrice <= 0 || !Number.isFinite(endPrice)) return 0;
+  if (
+    typeof startPrice !== 'number' || !Number.isFinite(startPrice) || startPrice <= 0 ||
+    typeof endPrice !== 'number' || !Number.isFinite(endPrice)
+  ) return 0;
   return ((endPrice - startPrice) / startPrice) * 100;
 }
 
@@ -32,36 +35,45 @@ export function PriceChart({ symbol, endPrice, baselinePrice }: Props) {
   const { isPremium } = useSubscription();
   const { t } = useLanguage();
   const [range, setRange] = useState<ChartRange>('1D');
-  const [data, setData] = useState<{ time: string; price: number }[]>([]);
+  const [historicalData, setHistoricalData] = useState<{ time: string; price: number }[]>([]);
 
   const lockedRange = PREMIUM_RANGES.includes(range) && !isPremium;
   const effectiveRange = lockedRange ? '1M' : range;
   useEffect(() => {
     let cancelled = false;
+    setHistoricalData([]);
 
     async function loadHistory() {
       const points = await getHistoricalPrices(symbol, effectiveRange);
       if (cancelled) return;
-
-      const nextData = points.length > 0
-        ? points
-        : getChartData(symbol, effectiveRange, endPrice, baselinePrice);
-      nextData[nextData.length - 1] = { ...nextData[nextData.length - 1], price: endPrice };
-      setData(nextData);
+      setHistoricalData(points);
     }
 
     loadHistory();
     return () => {
       cancelled = true;
     };
-  }, [symbol, effectiveRange, endPrice, baselinePrice]);
+  }, [symbol, effectiveRange]);
+
+  const data = useMemo(() => {
+    const source = historicalData.length > 0
+      ? historicalData
+      : getChartData(symbol, effectiveRange, endPrice, baselinePrice);
+    return source.map((point, index) => index === source.length - 1
+      ? { ...point, price: endPrice }
+      : point);
+  }, [historicalData, symbol, effectiveRange, endPrice, baselinePrice]);
 
   const timeframeChangePercent = calculatePeriodChange(data[0]?.price, data[data.length - 1]?.price);
   const positive = timeframeChangePercent >= 0;
   const color = positive ? '#16c784' : '#ea3943';
-  const prices = data.map((point) => point.price).filter(Number.isFinite);
-  const dataMin = prices.length > 0 ? Math.min(...prices) : 0;
-  const dataMax = prices.length > 0 ? Math.max(...prices) : 0;
+  const { dataMin, dataMax } = useMemo(() => {
+    const prices = data.map((point) => point.price).filter(Number.isFinite);
+    return {
+      dataMin: prices.length > 0 ? Math.min(...prices) : 0,
+      dataMax: prices.length > 0 ? Math.max(...prices) : 0,
+    };
+  }, [data]);
   const padding = Math.max((dataMax - dataMin) * 0.02, 0.01);
   return (
     <div className="surface p-4">

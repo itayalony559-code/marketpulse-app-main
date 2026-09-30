@@ -9,9 +9,11 @@ import { DisclaimerBanner } from '@/components/Disclaimer';
 export function UpgradePage() {
   const navigate = useNavigate();
   const { isPremium, activatePremium } = useSubscription();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const [email, setEmail] = useState('');
   const [processing, setProcessing] = useState(false);
+  const [plan, setPlan] = useState<'Monthly' | 'Yearly'>('Monthly');
+  const [webhookDelivered, setWebhookDelivered] = useState<boolean | null>(null);
 
   const freeFeatures: TranslationKey[] = [
     'basicMarketData',
@@ -32,9 +34,10 @@ export function UpgradePage() {
 
   const handleUpgrade = async () => {
     setProcessing(true);
-    await activatePremium(email || undefined);
+    setWebhookDelivered(null);
+    const delivered = await activatePremium(email.trim() || 'guest@marketpulse.app', plan);
+    setWebhookDelivered(delivered);
     setProcessing(false);
-    navigate('/');
   };
 
   return (
@@ -88,9 +91,14 @@ export function UpgradePage() {
           </div>
           <p className="text-xs font-semibold uppercase tracking-wide text-gold-400">{t('premium')}</p>
           <p className="mt-2 text-3xl font-bold text-white">
-            $19<span className="text-base font-medium text-slate-400">/mo</span>
+            {plan === 'Monthly' ? '$19' : '$190'}
+            <span className="text-base font-medium text-slate-400">/{plan === 'Monthly' ? 'mo' : 'yr'}</span>
           </p>
-          <p className="text-xs text-slate-500">{t('billedMonthly')}</p>
+          <p className="text-xs text-slate-500">
+            {plan === 'Monthly'
+              ? t('billedMonthly')
+              : lang === 'he' ? 'חיוב שנתי · ניתן לבטל בכל עת' : 'Billed yearly · Cancel anytime'}
+          </p>
           <ul className="mt-5 space-y-3">
             {premiumFeatures.map((f) => (
               <li key={f} className="flex items-start gap-2 text-sm text-slate-200">
@@ -106,6 +114,21 @@ export function UpgradePage() {
             </div>
           ) : (
             <div className="mt-6 space-y-3">
+              <div className="grid grid-cols-2 rounded-lg border border-ink-700 bg-ink-950 p-1" role="group" aria-label={lang === 'he' ? 'תדירות חיוב' : 'Billing frequency'}>
+                {(['Monthly', 'Yearly'] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={plan === option}
+                    onClick={() => setPlan(option)}
+                    className={`rounded-md px-3 py-2 text-xs font-semibold transition-colors ${plan === option ? 'bg-gold-500/15 text-gold-300' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    {option === 'Monthly'
+                      ? lang === 'he' ? 'חודשי' : 'Monthly'
+                      : lang === 'he' ? 'שנתי' : 'Yearly'}
+                  </button>
+                ))}
+              </div>
               <input
                 type="email"
                 value={email}
@@ -127,6 +150,16 @@ export function UpgradePage() {
                 {processing ? t('processing') : t('upgradeToPremium')}
               </button>
             </div>
+          )}
+          {webhookDelivered !== null && (
+            <p
+              role={webhookDelivered ? 'status' : 'alert'}
+              className={`mt-3 rounded-lg border px-3 py-2 text-xs ${webhookDelivered ? 'border-bull/30 bg-bull/10 text-bull' : 'border-gold-500/30 bg-gold-500/10 text-gold-300'}`}
+            >
+              {webhookDelivered
+                ? lang === 'he' ? 'הפרימיום הופעל והעדכון נשלח.' : 'Premium is active and the subscription webhook was delivered.'
+                : lang === 'he' ? 'הפרימיום הופעל, אך שליחת העדכון נכשלה.' : 'Premium is active, but the subscription webhook could not be delivered.'}
+            </p>
           )}
         </div>
       </div>
