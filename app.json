@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "MarketPulse",
+    "slug": "marketpulse-app",
+    "scheme": "marketpulse",
+    "plugins": [
+      "expo-notifications",
+      "expo-web-browser"
+    ]
+  }
+}
