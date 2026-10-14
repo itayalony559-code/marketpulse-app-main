@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from 'react';
 import type { SubscriptionContextType } from '@/types';
-import { supabaseAnonKey, supabaseUrl } from '@/lib/publicEnv';
 
 const STORAGE_KEY = 'marketpulse_is_premium';
 
@@ -33,33 +32,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
   }, [isPremium]);
 
-  const activatePremium = useCallback(async (email: string, plan: 'Monthly' | 'Yearly') => {
-    setIsPremium(true);
-
-    try {
-      if (!supabaseUrl || !supabaseAnonKey) return false;
-      const functionUrl = `${supabaseUrl}/functions/v1/send-premium-webhook`;
-
-      const response = await fetch(functionUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${supabaseAnonKey}`,
-        },
-        body: JSON.stringify({
-          email,
-          plan,
-          amount: plan === 'Monthly' ? 19 : 190,
-          currency: 'USD',
-          timestamp: new Date().toISOString(),
-        }),
-      });
-      return response.ok;
-    } catch {
-      return false;
-    }
-  }, []);
-
+  const activatePremium = useCallback(() => setIsPremium(true), []);
   const resetPremium = useCallback(() => setIsPremium(false), []);
 
   const value = useMemo<SubscriptionContextType>(

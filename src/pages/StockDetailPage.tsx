@@ -435,23 +435,45 @@ export function StockDetailPage() {
           const data = sessionData[s];
           const isActive = tab === s;
           const isPremiumSession = s !== 'REGULAR' && !isPremium;
+          const sessionLabel = s.replace('-', ' ');
           return (
             <button
               key={s}
-              onClick={() => setTab(s)}
+              type="button"
+              aria-label={
+                isPremiumSession
+                  ? `${sessionLabel}, Premium feature. Upgrade to unlock.`
+                  : `View ${sessionLabel} data`
+              }
+              aria-pressed={isActive}
+              onClick={() => {
+                if (isPremiumSession) {
+                  navigate('/upgrade');
+                  return;
+                }
+                setTab(s);
+              }}
               className={`relative rounded-xl border p-3 text-left transition-all ${
                 isActive
                   ? 'border-bull/40 bg-bull/5'
-                  : 'border-ink-700/60 bg-ink-900 hover:bg-ink-850'
+                  : isPremiumSession
+                    ? 'border-gold-500/30 bg-ink-900 hover:border-gold-500/50 hover:bg-ink-850'
+                    : 'border-ink-700/60 bg-ink-900 hover:bg-ink-850'
               }`}
             >
               <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                {s.replace('-', ' ')}
+                {sessionLabel}
               </p>
-              <p className="tabular mt-1 text-sm font-bold text-white">{formatPrice(data.price, asset.currency)}</p>
-              <p className={`tabular text-xs font-medium ${changeColor(data.percent)}`}>
-                {formatPercent(data.percent)}
-              </p>
+              {isPremiumSession ? (
+                <p className="mt-1 text-xs font-semibold text-gold-400">Unlock with Premium</p>
+              ) : (
+                <>
+                  <p className="tabular mt-1 text-sm font-bold text-white">{formatPrice(data.price, asset.currency)}</p>
+                  <p className={`tabular text-xs font-medium ${changeColor(data.percent)}`}>
+                    {formatPercent(data.percent)}
+                  </p>
+                </>
+              )}
               {isPremiumSession && (
                 <Lock className="absolute right-2 top-2 h-3 w-3 text-gold-500/60" />
               )}

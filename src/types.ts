@@ -143,6 +143,6 @@ export type MarketSession = 'PRE-MARKET' | 'OPEN' | 'AFTER-HOURS' | 'CLOSED';
 
 export type SubscriptionContextType = {
   isPremium: boolean;
-  activatePremium: (email: string, plan: 'Monthly' | 'Yearly') => Promise<boolean>;
+  activatePremium: () => void;
   resetPremium: () => void;
 };

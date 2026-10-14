@@ -1,485 +1,527 @@
+import { ClerkProvider, useAuth, useOAuth, useUser } from '@clerk/expo';
+import { tokenCache } from '@clerk/expo/token-cache';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { NavigationContainer, DarkTheme, useNavigation } from '@react-navigation/native';
-import type { CompositeNavigationProp } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
-import Constants, { ExecutionEnvironment } from 'expo-constants';
-import * as AuthSession from 'expo-auth-session';
-import * as WebBrowser from 'expo-web-browser';
-import type { Session } from '@supabase/supabase-js';
-import { useCallback, useContext, useEffect, useMemo, useState, createContext, type ReactNode } from 'react';
+import { makeRedirectUri } from 'expo-auth-session';
+import { BarChart3, Check, Crown, Globe, MessageSquareText, Search, Star, X } from 'lucide-react-native';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
+  Linking,
+  Modal,
   Pressable,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { LANGUAGES, type Language } from './i18n/translations';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { assets } from '@/data/assets';
-import { marketIndexes } from '@/data/marketIndexes';
-import { news } from '@/data/news';
-import type { Asset, NewsArticle, RiskLevel } from '@/types';
-import { supabase } from '@/lib/supabase';
+import { WebView } from 'react-native-webview';
 
-WebBrowser.maybeCompleteAuthSession();
+const BACKGROUND = '#08090C';
+const ACCENT = '#00FF88';
+const SURFACE_ALT = '#111827';
+const BORDER = '#253042';
+const OAUTH_REDIRECT_URL = makeRedirectUri({ path: 'oauth-native-callback' });
+const APP_USAGE_KEY = 'marketpulse_app_usage_seconds';
+const SUBSCRIPTION_KEY = 'marketpulse_subscription_plan';
+const FEEDBACK_KEY = 'marketpulse_feedback_entries';
+const STRIPE_CHECKOUT_URL = 'https://buy.stripe.com/test_00g7uEdrZcQJgDk8xx';
+const STRIPE_PORTAL_URL = 'https://billing.stripe.com/p/login/test_4gw3fP1Da6JrgDk8xx';
+const HIDE_WEB_APP_HEADER = `
+  (function () {
+    var root = document.documentElement;
+    if (!root) return true;
 
-const COLORS = {
-  background: '#07110D',
-  surface: '#101C16',
-  raised: '#17261E',
-  border: '#263A2F',
-  text: '#F2F7F3',
-  muted: '#93A59A',
-  accent: '#62E6A2',
-  negative: '#F18484',
-};
-
-const WATCHLIST_KEY = 'marketpulse_watchlist';
-const ALERTS_KEY = 'marketpulse_alert_symbols';
-const RISK_KEY = 'marketpulse_risk_profile';
-const isExpoGo = Constants.appOwnership === 'expo' ||
-  Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
-
-type RootStackParamList = {
-  Login: undefined;
-  Main: undefined;
-  AssetDetail: { symbol: string };
-  NewsDetail: { id: string };
-  Upgrade: undefined;
-};
-
-type TabParamList = {
-  Markets: undefined;
-  Explore: undefined;
-  Watchlist: undefined;
-  Profile: undefined;
-};
-
-type AppNavigation = CompositeNavigationProp<
-  BottomTabNavigationProp<TabParamList>,
-  NativeStackNavigationProp<RootStackParamList>
->;
-
-const RootStack = createNativeStackNavigator<RootStackParamList>();
-const Tabs = createBottomTabNavigator<TabParamList>();
-
-type NativeData = {
-  watchlist: string[];
-  toggleWatchlist: (symbol: string) => void;
-  alertSymbols: string[];
-  toggleAlert: (symbol: string) => void;
-  requestNotificationPermission: () => Promise<boolean>;
-};
-
-const NativeDataContext = createContext<NativeData | null>(null);
-
-function NativeDataProvider({ children }: { children: ReactNode }) {
-  const [watchlist, setWatchlist] = useState(['NVDA', 'AAPL', 'TSLA']);
-  const [alertSymbols, setAlertSymbols] = useState<string[]>([]);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    let mounted = true;
-    void Promise.all([
-      AsyncStorage.getItem(WATCHLIST_KEY),
-      AsyncStorage.getItem(ALERTS_KEY),
-    ]).then(([savedWatchlist, savedAlerts]) => {
-      if (!mounted) return;
-      if (savedWatchlist) setWatchlist(JSON.parse(savedWatchlist) as string[]);
-      if (savedAlerts) setAlertSymbols(JSON.parse(savedAlerts) as string[]);
-      setReady(true);
-    }).catch(() => {
-      if (mounted) setReady(true);
-    });
-    return () => { mounted = false; };
-  }, []);
-
-  useEffect(() => {
-    if (ready) void AsyncStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlist));
-  }, [ready, watchlist]);
-
-  useEffect(() => {
-    if (ready) void AsyncStorage.setItem(ALERTS_KEY, JSON.stringify(alertSymbols));
-  }, [ready, alertSymbols]);
-
-  const toggleWatchlist = useCallback((symbol: string) => {
-    setWatchlist((current) => current.includes(symbol)
-      ? current.filter((item) => item !== symbol)
-      : [...current, symbol]);
-  }, []);
-
-  const toggleAlert = useCallback((symbol: string) => {
-    setAlertSymbols((current) => current.includes(symbol)
-      ? current.filter((item) => item !== symbol)
-      : [...current, symbol]);
-  }, []);
-
-  const requestNotificationPermission = useCallback(async () => {
-    if (isExpoGo) return false;
-    try {
-      const Notifications = await import('expo-notifications');
-      let { status } = await Notifications.getPermissionsAsync();
-      if (status !== 'granted') {
-        ({ status } = await Notifications.requestPermissionsAsync());
-      }
-      return status === 'granted';
-    } catch {
-      return false;
+    function hideHeader() {
+      root.querySelectorAll('header').forEach(function (header) {
+        header.style.setProperty('display', 'none', 'important');
+      });
     }
-  }, []);
 
-  const value = useMemo(() => ({
-    watchlist,
-    toggleWatchlist,
-    alertSymbols,
-    toggleAlert,
-    requestNotificationPermission,
-  }), [watchlist, toggleWatchlist, alertSymbols, toggleAlert, requestNotificationPermission]);
+    hideHeader();
+    if (!root.hasAttribute('data-marketpulse-native-header-observer')) {
+      root.setAttribute('data-marketpulse-native-header-observer', 'true');
+      new MutationObserver(hideHeader).observe(root, { childList: true, subtree: true });
+    }
+  })();
+  true;
+`;
 
-  return <NativeDataContext.Provider value={value}>{children}</NativeDataContext.Provider>;
-}
+export default function NativeApp() {
+  const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  if (!publishableKey) {
+    if (__DEV__) {
+      return <NativeAppDevelopmentFallback />;
+    }
+    throw new Error('EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY is required.');
+  }
 
-function useNativeData() {
-  const value = useContext(NativeDataContext);
-  if (!value) throw new Error('NativeDataProvider is missing.');
-  return value;
-}
-
-function formatPrice(value: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value);
-}
-
-function formatChange(value: number) {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
-}
-
-function Page({ children }: { children: ReactNode }) {
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
-        {children}
-      </ScrollView>
-    </SafeAreaView>
+    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+      <SafeAreaProvider>
+        <NativeAppContent />
+      </SafeAreaProvider>
+    </ClerkProvider>
   );
 }
 
-function Eyebrow({ children }: { children: string }) {
-  return <Text style={styles.eyebrow}>{children.toUpperCase()}</Text>;
-}
-
-function PageHeading({ title, subtitle }: { title: string; subtitle?: string }) {
+function NativeAppDevelopmentFallback() {
   return (
-    <View style={styles.heading}>
-      <Text style={styles.headingTitle}>{title}</Text>
-      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-    </View>
-  );
-}
-
-function AssetRow({ asset, onPress, trailing }: { asset: Asset; onPress: () => void; trailing?: ReactNode }) {
-  return (
-    <Pressable style={({ pressed }) => [styles.assetRow, pressed && styles.pressed]} onPress={onPress}>
-      <View style={styles.assetIdentity}>
-        <Text style={styles.symbol}>{asset.symbol}</Text>
-        <Text style={styles.assetName} numberOfLines={1}>{asset.name}</Text>
+    <SafeAreaProvider>
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor={BACKGROUND} />
+        <WebView
+          source={{ uri: 'https://marketpulse-app-main.vercel.app' }}
+          style={styles.webView}
+          containerStyle={styles.webViewContainer}
+          javaScriptEnabled
+          domStorageEnabled
+          injectedJavaScriptBeforeContentLoaded={HIDE_WEB_APP_HEADER}
+          injectedJavaScript={HIDE_WEB_APP_HEADER}
+          startInLoadingState
+          renderLoading={() => (
+            <View style={styles.loading}>
+              <ActivityIndicator color={ACCENT} />
+            </View>
+          )}
+        />
       </View>
-      <View style={styles.assetValues}>
-        <Text style={styles.price}>{formatPrice(asset.price, asset.currency)}</Text>
-        <Text style={[styles.change, asset.changePercent < 0 && styles.negative]}>
-          {formatChange(asset.changePercent)}
-        </Text>
-      </View>
-      {trailing}
-    </Pressable>
+    </SafeAreaProvider>
   );
 }
 
-function MarketsScreen() {
-  const navigation = useNavigation<AppNavigation>();
-  return (
-    <Page>
-      <Eyebrow>MarketPulse / Live market</Eyebrow>
-      <PageHeading title="Markets" subtitle="A clear view of today's session." />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.indexStrip}>
-        {marketIndexes.map((index) => (
-          <View key={index.symbol} style={styles.indexCard}>
-            <Text style={styles.indexName}>{index.name}</Text>
-            <Text style={styles.indexValue}>{index.value.toLocaleString('en-US', { maximumFractionDigits: 2 })}</Text>
-            <Text style={[styles.change, index.changePercent < 0 && styles.negative]}>
-              {formatChange(index.changePercent)} today
-            </Text>
-          </View>
-        ))}
-      </ScrollView>
-      <SectionTitle title="Tracked assets" action="View all" onPress={() => navigation.navigate('Explore')} />
-      <View style={styles.list}>
-        {assets.slice(0, 12).map((asset) => (
-          <AssetRow key={asset.symbol} asset={asset} onPress={() => navigation.navigate('AssetDetail', { symbol: asset.symbol })} />
-        ))}
-      </View>
-      <SectionTitle title="Latest headlines" action="See story" onPress={() => navigation.navigate('NewsDetail', { id: news[0].id })} />
-      <NewsPreview article={news[0]} onPress={() => navigation.navigate('NewsDetail', { id: news[0].id })} />
-    </Page>
-  );
-}
-
-function SectionTitle({ title, action, onPress }: { title: string; action?: string; onPress?: () => void }) {
-  return (
-    <View style={styles.sectionTitle}>
-      <Text style={styles.sectionHeading}>{title}</Text>
-      {action && onPress ? <Pressable onPress={onPress}><Text style={styles.actionText}>{action}</Text></Pressable> : null}
-    </View>
-  );
-}
-
-function ExploreScreen() {
-  const navigation = useNavigation<AppNavigation>();
-  const [query, setQuery] = useState('');
-  const filtered = assets.filter((asset) => {
-    const value = query.trim().toLowerCase();
-    return !value || asset.symbol.toLowerCase().includes(value) || asset.name.toLowerCase().includes(value);
-  });
-  return (
-    <Page>
-      <Eyebrow>Discover</Eyebrow>
-      <PageHeading title="Explore" subtitle="Find a company by ticker or name." />
-      <TextInput
-        value={query}
-        onChangeText={setQuery}
-        placeholder="Search companies"
-        placeholderTextColor={COLORS.muted}
-        autoCapitalize="characters"
-        style={styles.searchInput}
-      />
-      <View style={styles.list}>
-        {filtered.map((asset) => (
-          <AssetRow key={asset.symbol} asset={asset} onPress={() => navigation.navigate('AssetDetail', { symbol: asset.symbol })} />
-        ))}
-      </View>
-    </Page>
-  );
-}
-
-function WatchlistScreen() {
-  const navigation = useNavigation<AppNavigation>();
-  const { watchlist } = useNativeData();
-  const items = watchlist.map((symbol) => assets.find((asset) => asset.symbol === symbol)).filter((asset): asset is Asset => Boolean(asset));
-  return (
-    <Page>
-      <Eyebrow>Your market</Eyebrow>
-      <PageHeading title="Watchlist" subtitle={`${items.length} assets saved on this device.`} />
-      {items.length ? (
-        <View style={styles.list}>
-          {items.map((asset) => <AssetRow key={asset.symbol} asset={asset} onPress={() => navigation.navigate('AssetDetail', { symbol: asset.symbol })} />)}
-        </View>
-      ) : (
-        <Text style={styles.emptyText}>Your watchlist is empty. Add an asset from its detail view.</Text>
-      )}
-    </Page>
-  );
-}
-
-function ProfileScreen({ session, onUpgrade }: { session: Session; onUpgrade: () => void }) {
-  const [level, setLevel] = useState<RiskLevel>('moderate');
-  const [saved, setSaved] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const scoreByLevel: Record<RiskLevel, number> = { conservative: 3, moderate: 7, aggressive: 11 };
+function NativeAppContent() {
+  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const { user } = useUser();
+  const [profileModalVisible, setProfileModalVisible] = useState(false);
+  const [languageModalVisible, setLanguageModalVisible] = useState(false);
+  const [language, setLanguage] = useState<Language>('en');
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
+  const [usageSeconds, setUsageSeconds] = useState(0);
+  const [plan, setPlan] = useState<'free' | 'premium'>('free');
+  const startedAtRef = useRef<number | null>(null);
+  const webViewRef = useRef<WebView>(null);
 
   useEffect(() => {
-    let mounted = true;
-    void AsyncStorage.getItem(RISK_KEY).then((value) => {
-      if (!mounted || !value) return;
-      const profile = JSON.parse(value) as { level?: RiskLevel };
-      if (profile.level) setLevel(profile.level);
-    }).catch(() => undefined);
-    return () => { mounted = false; };
+    let active = true;
+    let baselineUsage = 0;
+    let sessionStart = 0;
+    let interval: ReturnType<typeof setInterval> | undefined;
+
+    const loadUsage = async () => {
+      try {
+        const storedUsage = await AsyncStorage.getItem(APP_USAGE_KEY);
+        const storedPlan = await AsyncStorage.getItem(SUBSCRIPTION_KEY);
+        const parsedUsage = Number(storedUsage ?? '0');
+        baselineUsage = Number.isFinite(parsedUsage) ? parsedUsage : 0;
+        if (active) {
+          setUsageSeconds(baselineUsage);
+          setPlan(storedPlan === 'premium' ? 'premium' : 'free');
+        }
+      } catch {
+        if (active) {
+          setUsageSeconds(0);
+          setPlan('free');
+        }
+      }
+
+      sessionStart = Date.now();
+      startedAtRef.current = sessionStart;
+      interval = setInterval(() => {
+        if (!active) {
+          return;
+        }
+        const elapsedSeconds = Math.max(0, Math.floor((Date.now() - sessionStart) / 1000));
+        setUsageSeconds(baselineUsage + elapsedSeconds);
+      }, 1000);
+    };
+
+    void loadUsage();
+
+    return () => {
+      active = false;
+      if (interval) {
+        clearInterval(interval);
+      }
+      if (startedAtRef.current) {
+        const elapsed = Math.max(0, Math.floor((Date.now() - startedAtRef.current) / 1000));
+        void AsyncStorage.setItem(APP_USAGE_KEY, String(Math.max(0, baselineUsage + elapsed)));
+      }
+    };
   }, []);
 
-  const saveProfile = async () => {
-    setSaving(true);
-    const profile = { level, score: scoreByLevel[level], updatedAt: new Date().toISOString() };
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    setSignOutError('');
     try {
-      await AsyncStorage.setItem(RISK_KEY, JSON.stringify(profile));
-      if (supabase) {
-        const { error } = await supabase.from('user_profiles').upsert({
-          user_id: session.user.id,
-          risk_level: level,
-          risk_score: scoreByLevel[level],
-          updated_at: profile.updatedAt,
-        });
-        if (error) throw error;
-      }
-      setSaved(true);
-    } catch {
-      setSaved(false);
+      await signOut();
+    } catch (caught) {
+      setSignOutError(caught instanceof Error ? caught.message : 'Sign-out failed.');
     } finally {
-      setSaving(false);
+      setSigningOut(false);
+    }
+  };
+
+  const handleUpgrade = async () => {
+    await AsyncStorage.setItem(SUBSCRIPTION_KEY, 'premium');
+    setPlan('premium');
+    await Linking.openURL(STRIPE_CHECKOUT_URL);
+  };
+
+  const handleManageSubscription = async () => {
+    await Linking.openURL(STRIPE_PORTAL_URL);
+  };
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={BACKGROUND} />
+      {!isLoaded ? (
+        <View style={styles.loading}>
+          <ActivityIndicator color={ACCENT} />
+        </View>
+      ) : isSignedIn ? (
+        <SafeAreaView style={styles.webViewSafeArea} edges={['top', 'right', 'bottom', 'left']}>
+          <View style={styles.authToolbar}>
+            <View style={styles.headerBrand}>
+              <View style={styles.headerBrandMark}>
+                <BarChart3 size={18} color={BACKGROUND} strokeWidth={2.5} />
+              </View>
+              <View style={styles.headerBrandCopy}>
+                <Text style={styles.headerBrandName}>MarketPulse</Text>
+                <Text style={styles.headerBrandSubtitle}>MARKET INTELLIGENCE</Text>
+              </View>
+            </View>
+            <View style={styles.headerActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Select language"
+                onPress={() => setLanguageModalVisible(true)}
+                style={({ pressed }) => [styles.headerIconButton, pressed && styles.buttonPressed]}
+              >
+                <Globe size={17} color="#C4CAD6" />
+                <Text style={styles.languageFlag}>
+                  {LANGUAGES.find((item) => item.code === language)?.flag ?? '🌐'}
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Search markets"
+                onPress={() =>
+                  webViewRef.current?.injectJavaScript(
+                    "window.location.href = window.location.origin + '/explore'; true;",
+                  )
+                }
+                style={({ pressed }) => [styles.headerIconButton, pressed && styles.buttonPressed]}
+              >
+                <Search size={18} color="#C4CAD6" />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open profile"
+                onPress={() => setProfileModalVisible(true)}
+                style={styles.profileTrigger}
+              >
+                {user?.imageUrl ? (
+                  <Image source={{ uri: user.imageUrl }} style={styles.profileAvatar} />
+                ) : (
+                  <View style={styles.profileAvatarFallback}>
+                    <Text style={styles.profileAvatarFallbackText}>
+                      {getInitials(user?.fullName ?? 'MarketPulse User')}
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            </View>
+          </View>
+          <WebView
+            ref={webViewRef}
+            source={{ uri: 'https://marketpulse-app-main.vercel.app' }}
+            style={styles.webView}
+            containerStyle={styles.webViewContainer}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            injectedJavaScriptBeforeContentLoaded={HIDE_WEB_APP_HEADER}
+            injectedJavaScript={HIDE_WEB_APP_HEADER}
+            onLoadEnd={() => webViewRef.current?.injectJavaScript(HIDE_WEB_APP_HEADER)}
+            sharedCookiesEnabled
+            thirdPartyCookiesEnabled
+            startInLoadingState={true}
+            renderLoading={() => (
+              <View style={styles.loading}>
+                <ActivityIndicator color={ACCENT} />
+              </View>
+            )}
+          />
+          <Modal
+            visible={languageModalVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setLanguageModalVisible(false)}
+          >
+            <TouchableWithoutFeedback onPress={() => setLanguageModalVisible(false)}>
+              <View style={styles.languageBackdrop} />
+            </TouchableWithoutFeedback>
+            <View style={styles.languageModalContainer}>
+              <View style={styles.languageModalCard}>
+                <Text style={styles.languageModalTitle}>Choose language</Text>
+                {LANGUAGES.map((item) => (
+                  <Pressable
+                    key={item.code}
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setLanguage(item.code);
+                      setLanguageModalVisible(false);
+                      webViewRef.current?.injectJavaScript(
+                        `window.localStorage.setItem('marketpulse_language', ${JSON.stringify(item.code)}); window.location.reload(); true;`,
+                      );
+                    }}
+                    style={({ pressed }) => [
+                      styles.languageOption,
+                      item.code === language && styles.languageOptionSelected,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Text style={styles.languageOptionText}>
+                      {item.flag}  {item.label}
+                    </Text>
+                    {item.code === language ? <Check size={16} color={ACCENT} /> : null}
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          </Modal>
+          <ProfileModal
+            visible={profileModalVisible}
+            onClose={() => setProfileModalVisible(false)}
+            user={user}
+            plan={plan}
+            usageSeconds={usageSeconds}
+            onUpgrade={handleUpgrade}
+            onManageSubscription={handleManageSubscription}
+            onSignOut={() => void handleSignOut()}
+            signingOut={signingOut}
+            signOutError={signOutError}
+          />
+        </SafeAreaView>
+      ) : (
+        <LoginScreen />
+      )}
+    </View>
+  );
+}
+
+function ProfileModal({
+  visible,
+  onClose,
+  user,
+  plan,
+  usageSeconds,
+  onUpgrade,
+  onManageSubscription,
+  onSignOut,
+  signingOut,
+  signOutError,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  user?: ReturnType<typeof useUser>['user'];
+  plan: 'free' | 'premium';
+  usageSeconds: number;
+  onUpgrade: () => Promise<void>;
+  onManageSubscription: () => Promise<void>;
+  onSignOut: () => Promise<void> | void;
+  signingOut: boolean;
+  signOutError: string;
+}) {
+  const [feedbackMode, setFeedbackMode] = useState(false);
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState('');
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+
+  const userName = user?.fullName || 'MarketPulse User';
+  const userEmail = user?.primaryEmailAddress?.emailAddress || 'you@marketpulse.app';
+  const avatarSource = user?.imageUrl ? { uri: user.imageUrl } : null;
+
+  const handleSubmitFeedback = async () => {
+    setSubmittingFeedback(true);
+    try {
+      const payload = {
+        rating,
+        comment: comment.trim(),
+        userName,
+        userEmail,
+        createdAt: new Date().toISOString(),
+      };
+
+      const previous = (await AsyncStorage.getItem(FEEDBACK_KEY)) ?? '[]';
+      const entries = JSON.parse(previous) as Record<string, unknown>[];
+      await AsyncStorage.setItem(FEEDBACK_KEY, JSON.stringify([...entries, payload]));
+      console.log('MarketPulse feedback saved locally:', payload);
+      setFeedbackSubmitted(true);
+      setComment('');
+      setRating(5);
+      setTimeout(() => {
+        setFeedbackMode(false);
+        setFeedbackSubmitted(false);
+      }, 900);
+    } catch {
+      setFeedbackSubmitted(false);
+    } finally {
+      setSubmittingFeedback(false);
     }
   };
 
   return (
-    <Page>
-      <Eyebrow>Account</Eyebrow>
-      <PageHeading title="Risk profile" subtitle={session.user.email ?? 'Signed in with Google'} />
-      <Text style={styles.bodyText}>Choose the profile that best describes your investing comfort.</Text>
-      <View style={styles.optionList}>
-        {(['conservative', 'moderate', 'aggressive'] as RiskLevel[]).map((item) => (
-          <Pressable key={item} onPress={() => { setLevel(item); setSaved(false); }} style={[styles.option, level === item && styles.optionSelected]}>
-            <Text style={styles.optionTitle}>{item[0].toUpperCase() + item.slice(1)}</Text>
-            <Text style={styles.optionDescription}>{item === 'conservative' ? 'Prioritize steadier returns.' : item === 'moderate' ? 'Balance growth with volatility.' : 'Accept greater swings for growth.'}</Text>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableWithoutFeedback onPress={onClose}>
+        <View style={styles.modalBackdrop} />
+      </TouchableWithoutFeedback>
+      <View style={styles.modalContainer}>
+        <View style={styles.modalCard}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close profile" onPress={onClose} style={styles.closeButton}>
+            <X size={18} color="#DCE3F0" />
           </Pressable>
-        ))}
+
+          <View style={styles.userRow}>
+            {avatarSource ? (
+              <Image source={avatarSource} style={styles.userAvatar} />
+            ) : (
+              <View style={styles.userAvatarFallback}>
+                <Text style={styles.userAvatarFallbackText}>{getInitials(userName)}</Text>
+              </View>
+            )}
+            <View style={styles.userHeaderText}>
+              <Text style={styles.userName}>{userName}</Text>
+              <Text style={styles.userEmail}>{userEmail}</Text>
+            </View>
+          </View>
+
+          <View style={styles.statusCard}>
+            <Text style={styles.statusLabel}>Account</Text>
+            <View style={styles.statusRow}>
+              <Text style={styles.statusText}>{plan === 'premium' ? 'Premium / News+' : 'Free Plan'}</Text>
+              {plan === 'premium' ? (
+                <View style={styles.activeMemberBadge}>
+                  <Check size={12} color="#08120A" />
+                  <Text style={styles.activeMemberBadgeText}>Active Member</Text>
+                </View>
+              ) : null}
+            </View>
+            {plan === 'premium' ? (
+              <Pressable style={styles.primaryButton} onPress={() => void onManageSubscription()}>
+                <Text style={styles.primaryButtonText}>Manage Subscription</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.primaryButton} onPress={() => void onUpgrade()}>
+                <Crown size={16} color="#08120A" />
+                <Text style={styles.primaryButtonText}>Upgrade to Premium</Text>
+              </Pressable>
+            )}
+          </View>
+
+          <View style={styles.metricCard}>
+            <Text style={styles.metricTitle}>Time Spent</Text>
+            <Text style={styles.metricValue}>{formatUsage(usageSeconds)}</Text>
+            <Text style={styles.metricSubtitle}>זמן באפליקציה</Text>
+          </View>
+
+          {!feedbackMode ? (
+            <Pressable style={styles.feedbackButton} onPress={() => setFeedbackMode(true)}>
+              <MessageSquareText size={16} color="#E5ECFF" />
+              <Text style={styles.feedbackButtonText}>Leave Feedback</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.feedbackForm}>
+              <Text style={styles.feedbackTitle}>Your feedback</Text>
+              <View style={styles.starRow}>
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <Pressable key={value} onPress={() => setRating(value)} style={styles.starButton}>
+                    <Star
+                      size={22}
+                      color={value <= rating ? '#F9B449' : '#475569'}
+                      fill={value <= rating ? '#F9B449' : 'transparent'}
+                    />
+                  </Pressable>
+                ))}
+              </View>
+              <TextInput
+                value={comment}
+                onChangeText={setComment}
+                placeholder="Tell us what you think..."
+                placeholderTextColor="#7C8AA6"
+                multiline
+                numberOfLines={4}
+                style={styles.feedbackInput}
+              />
+              <View style={styles.feedbackActions}>
+                <Pressable style={styles.secondaryButton} onPress={() => setFeedbackMode(false)}>
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.submitButton, submittingFeedback && styles.submitButtonDisabled]}
+                  onPress={() => void handleSubmitFeedback()}
+                  disabled={submittingFeedback}
+                >
+                  <Text style={styles.submitButtonText}>
+                    {submittingFeedback ? 'Sending...' : feedbackSubmitted ? 'Sent' : 'Send'}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+          {signOutError ? (
+            <Text accessibilityRole="alert" style={styles.signOutError}>
+              {signOutError}
+            </Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            disabled={signingOut}
+            onPress={() => void onSignOut()}
+            style={({ pressed }) => [
+              styles.signOutButton,
+              (pressed || signingOut) && styles.buttonPressed,
+              styles.profileSignOut,
+            ]}
+          >
+            {signingOut ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+            <Text style={styles.signOutButtonText}>{signingOut ? 'Signing out…' : 'Sign Out'}</Text>
+          </Pressable>
+        </View>
       </View>
-      <PrimaryButton title={saving ? 'Saving…' : 'Save profile'} onPress={() => void saveProfile()} disabled={saving} />
-      {saved ? <Text style={styles.successText}>Profile saved.</Text> : null}
-      <PrimaryButton title="Explore Premium" variant="secondary" onPress={onUpgrade} />
-      <PrimaryButton title="Sign out" variant="secondary" onPress={() => { void supabase?.auth.signOut(); }} />
-    </Page>
-  );
-}
-
-function AssetDetailScreen({ route, navigation }: NativeStackScreenProps<RootStackParamList, 'AssetDetail'>) {
-  const asset = assets.find((item) => item.symbol === route.params.symbol);
-  const { watchlist, toggleWatchlist, alertSymbols, toggleAlert, requestNotificationPermission } = useNativeData();
-  const [notice, setNotice] = useState('');
-
-  if (!asset) return <Page><Text style={styles.bodyText}>Asset not found.</Text></Page>;
-
-  const toggleNewsAlert = async () => {
-    if (alertSymbols.includes(asset.symbol)) {
-      toggleAlert(asset.symbol);
-      setNotice('News alert removed.');
-      return;
-    }
-    if (isExpoGo) {
-      setNotice('Notifications are unavailable in Expo Go. Use a development build to enable them.');
-      return;
-    }
-    const granted = await requestNotificationPermission();
-    if (!granted) {
-      setNotice('Enable notifications in device settings to receive alerts.');
-      return;
-    }
-    toggleAlert(asset.symbol);
-    const Notifications = await import('expo-notifications');
-    await Notifications.scheduleNotificationAsync({
-      content: { title: `${asset.symbol} news alerts`, body: 'Notifications are enabled for this asset.' },
-      trigger: null,
-    });
-    setNotice('News alert enabled.');
-  };
-
-  return (
-    <Page>
-      <Pressable onPress={() => navigation.goBack()}><Text style={styles.actionText}>‹ Markets</Text></Pressable>
-      <Eyebrow>{`${asset.exchange} / ${asset.sector}`}</Eyebrow>
-      <Text style={styles.detailSymbol}>{asset.symbol}</Text>
-      <Text style={styles.assetName}>{asset.name}</Text>
-      <Text style={styles.detailPrice}>{formatPrice(asset.price, asset.currency)}</Text>
-      <Text style={[styles.change, asset.changePercent < 0 && styles.negative]}>
-        {asset.change >= 0 ? '+' : ''}{asset.change.toFixed(2)} ({formatChange(asset.changePercent)}) today
-      </Text>
-      <View style={styles.statsGrid}>
-        <Stat label="Previous close" value={formatPrice(asset.previousClose, asset.currency)} />
-        <Stat label="Volume" value={asset.volume.toLocaleString('en-US')} />
-        <Stat label="Day high" value={formatPrice(asset.high ?? asset.price, asset.currency)} />
-        <Stat label="Day low" value={formatPrice(asset.low ?? asset.previousClose, asset.currency)} />
-      </View>
-      <PrimaryButton title={watchlist.includes(asset.symbol) ? 'Remove from watchlist' : 'Add to watchlist'} variant="secondary" onPress={() => toggleWatchlist(asset.symbol)} />
-      <PrimaryButton title={alertSymbols.includes(asset.symbol) ? 'Turn off news alert' : 'Enable news alert'} variant="secondary" onPress={() => void toggleNewsAlert()} />
-      {notice ? <Text style={styles.notice}>{notice}</Text> : null}
-      <SectionTitle title="Recent coverage" />
-      {news.filter((article) => article.tickers.includes(asset.symbol)).slice(0, 3).map((article) => (
-        <NewsPreview key={article.id} article={article} onPress={() => navigation.navigate('NewsDetail', { id: article.id })} />
-      ))}
-    </Page>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return <View style={styles.stat}><Text style={styles.statLabel}>{label}</Text><Text style={styles.statValue}>{value}</Text></View>;
-}
-
-function NewsPreview({ article, onPress }: { article: NewsArticle; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.newsCard, pressed && styles.pressed]}>
-      <Eyebrow>{`${article.category} / ${article.source}`}</Eyebrow>
-      <Text style={styles.newsHeadline}>{article.headline}</Text>
-      <Text style={styles.newsSummary} numberOfLines={3}>{article.summary}</Text>
-    </Pressable>
-  );
-}
-
-function NewsDetailScreen({ route, navigation }: NativeStackScreenProps<RootStackParamList, 'NewsDetail'>) {
-  const article = news.find((item) => item.id === route.params.id);
-  if (!article) return <Page><Text style={styles.bodyText}>Story not found.</Text></Page>;
-  return (
-    <Page>
-      <Pressable onPress={() => navigation.goBack()}><Text style={styles.actionText}>‹ Back</Text></Pressable>
-      <Eyebrow>{`${article.category} / ${article.source}`}</Eyebrow>
-      <Text style={styles.newsTitle}>{article.headline}</Text>
-      <Text style={styles.newsSummary}>{article.summary}</Text>
-      {article.body.map((paragraph, index) => <Text key={index} style={styles.bodyText}>{paragraph}</Text>)}
-    </Page>
-  );
-}
-
-function UpgradeScreen({ navigation }: NativeStackScreenProps<RootStackParamList, 'Upgrade'>) {
-  return (
-    <Page>
-      <Pressable onPress={() => navigation.goBack()}><Text style={styles.actionText}>‹ Back</Text></Pressable>
-      <Eyebrow>MarketPulse Plus</Eyebrow>
-      <PageHeading title="More signal, less noise." subtitle="Premium checkout is not enabled in this build." />
-      <View style={styles.indexCard}><Text style={styles.optionTitle}>Monthly</Text><Text style={styles.detailPrice}>$19 / month</Text></View>
-      <View style={styles.indexCard}><Text style={styles.optionTitle}>Yearly</Text><Text style={styles.detailPrice}>$190 / year</Text></View>
-      <PrimaryButton title="Return to markets" onPress={() => navigation.goBack()} />
-    </Page>
+    </Modal>
   );
 }
 
 function LoginScreen() {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const { startOAuthFlow } = useOAuth({ strategy: 'oauth_google' });
 
-  const signIn = async () => {
-    if (!supabase) {
-      setError('Supabase is not configured. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.');
-      return;
-    }
+  const signInWithGoogle = async () => {
     setBusy(true);
-    setError('');
     try {
-      const redirectTo = AuthSession.makeRedirectUri({ scheme: 'marketpulse' });
-      const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo, skipBrowserRedirect: true },
+      const { createdSessionId, setActive, authSessionResult } = await startOAuthFlow({
+        redirectUrl: OAUTH_REDIRECT_URL,
       });
-      if (oauthError) throw oauthError;
-      if (!data.url) throw new Error('Supabase did not return an authorization URL.');
-
-      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-      if (result.type !== 'success' || !result.url) return;
-      const callback = new URL(result.url);
-      const fragment = new URLSearchParams(callback.hash.replace(/^#/, ''));
-      const code = callback.searchParams.get('code');
-      if (code) {
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-        if (exchangeError) throw exchangeError;
-      } else {
-        const accessToken = callback.searchParams.get('access_token') ?? fragment.get('access_token');
-        const refreshToken = callback.searchParams.get('refresh_token') ?? fragment.get('refresh_token');
-        if (!accessToken || !refreshToken) throw new Error('The OAuth callback did not include a session.');
-        const { error: sessionError } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
-        if (sessionError) throw sessionError;
+      if (authSessionResult?.type === 'cancel' || authSessionResult?.type === 'dismiss') {
+        return;
       }
+      if (!createdSessionId) {
+        throw new Error('Google sign-in did not create a Clerk session.');
+      }
+      if (!setActive) {
+        throw new Error('Clerk could not activate the Google sign-in session.');
+      }
+      await setActive({ session: createdSessionId });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Google sign-in failed.');
+      console.error('Google sign-in failed:', caught);
     } finally {
       setBusy(false);
     }
@@ -487,183 +529,594 @@ function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.loginPage}>
-        <Eyebrow>Independent market intelligence</Eyebrow>
-        <Text style={styles.brand}>Market<Text style={styles.brandAccent}>Pulse</Text></Text>
-        <Text style={styles.subtitle}>Follow the numbers that move your portfolio.</Text>
-        <PrimaryButton title={busy ? 'Connecting…' : 'Continue with Google'} onPress={() => void signIn()} disabled={busy} />
-        {busy ? <ActivityIndicator color={COLORS.accent} style={styles.loader} /> : null}
-        {error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
+      <View style={styles.loginContent}>
+        <View style={styles.brand}>
+          <View style={styles.brandMark}>
+            <BarChart3 size={21} color={BACKGROUND} strokeWidth={2.5} />
+          </View>
+          <Text style={styles.brandName}>MarketPulse</Text>
+        </View>
+
+        <View style={styles.loginCard}>
+          <Text style={styles.eyebrow}>SECURE ACCESS</Text>
+          <Text style={styles.title}>Sign in to MarketPulse</Text>
+          <Text style={styles.description}>
+            Sign in to continue to your markets, news, and investor profile.
+          </Text>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Continue with Google"
+            disabled={busy}
+            onPress={() => void signInWithGoogle()}
+            style={({ pressed }) => [
+              styles.googleButton,
+              (pressed || busy) && styles.buttonPressed,
+            ]}
+          >
+            {busy ? (
+              <ActivityIndicator color="#171717" />
+            ) : (
+              <Text style={styles.googleMark}>G</Text>
+            )}
+            <Text style={styles.googleButtonText}>
+              {busy ? 'Connecting…' : 'Continue with Google'}
+            </Text>
+          </Pressable>
+
+          <Text style={styles.disclaimer}>
+            Not financial advice. For informational purposes only.
+          </Text>
+        </View>
       </View>
     </SafeAreaView>
   );
 }
 
-function PrimaryButton({
-  title,
-  onPress,
-  variant = 'primary',
-  disabled = false,
-}: {
-  title: string;
-  onPress: () => void;
-  variant?: 'primary' | 'secondary';
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.button,
-        variant === 'secondary' && styles.buttonSecondary,
-        pressed && styles.pressed,
-        disabled && styles.disabled,
-      ]}
-    >
-      <Text style={[styles.buttonText, variant === 'secondary' && styles.buttonTextSecondary]}>{title}</Text>
-    </Pressable>
-  );
+function getInitials(name: string): string {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('')
+    .trim() || 'MP';
 }
 
-function MainTabs({ session, onUpgrade }: { session: Session; onUpgrade: () => void }) {
-  return (
-    <Tabs.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: styles.tabBar,
-        tabBarActiveTintColor: COLORS.accent,
-        tabBarInactiveTintColor: COLORS.muted,
-        tabBarLabelStyle: styles.tabLabel,
-        sceneStyle: styles.scene,
-      }}
-    >
-      <Tabs.Screen name="Markets" component={MarketsScreen} />
-      <Tabs.Screen name="Explore" component={ExploreScreen} />
-      <Tabs.Screen name="Watchlist" component={WatchlistScreen} />
-      <Tabs.Screen name="Profile">
-        {() => <ProfileScreen session={session} onUpgrade={onUpgrade} />}
-      </Tabs.Screen>
-    </Tabs.Navigator>
-  );
-}
+function formatUsage(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
 
-export default function NativeApp() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
-    let mounted = true;
-    void supabase.auth.getSession().then(({ data }) => {
-      if (mounted) setSession(data.session);
-    }).catch(() => undefined).finally(() => {
-      if (mounted) setLoading(false);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (mounted) setSession(nextSession);
-    });
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  const theme = useMemo(() => ({
-    ...DarkTheme,
-    colors: { ...DarkTheme.colors, background: COLORS.background, card: COLORS.surface, text: COLORS.text, border: COLORS.border, primary: COLORS.accent },
-  }), []);
-
-  if (loading) {
-    return <SafeAreaProvider><View style={styles.loading}><ActivityIndicator color={COLORS.accent} /></View></SafeAreaProvider>;
+  if (hours > 0) {
+    return `${hours} hour${hours === 1 ? '' : 's'} ${minutes} minute${minutes === 1 ? '' : 's'}`;
   }
 
-  return (
-    <SafeAreaProvider>
-      <NativeDataProvider>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
-        <NavigationContainer theme={theme}>
-          <RootStack.Navigator screenOptions={{ headerShown: false, contentStyle: styles.scene }}>
-            {session ? (
-              <>
-                <RootStack.Screen name="Main">
-                  {({ navigation }) => <MainTabs session={session} onUpgrade={() => navigation.navigate('Upgrade')} />}
-                </RootStack.Screen>
-                <RootStack.Screen name="AssetDetail" component={AssetDetailScreen} options={{ headerShown: true, title: 'Asset details', headerTintColor: COLORS.text, headerStyle: styles.header }} />
-                <RootStack.Screen name="NewsDetail" component={NewsDetailScreen} options={{ headerShown: true, title: 'Market news', headerTintColor: COLORS.text, headerStyle: styles.header }} />
-                <RootStack.Screen name="Upgrade" component={UpgradeScreen} options={{ headerShown: true, title: 'Premium', headerTintColor: COLORS.text, headerStyle: styles.header }} />
-              </>
-            ) : (
-              <RootStack.Screen name="Login" component={LoginScreen} />
-            )}
-          </RootStack.Navigator>
-        </NavigationContainer>
-      </NativeDataProvider>
-    </SafeAreaProvider>
-  );
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
-  scene: { backgroundColor: COLORS.background },
-  page: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 34, gap: 18 },
-  heading: { gap: 5 },
-  headingTitle: { color: COLORS.text, fontSize: 30, fontWeight: '700' },
-  eyebrow: { color: COLORS.accent, fontSize: 10, fontWeight: '700', letterSpacing: 1.1 },
-  subtitle: { color: COLORS.muted, fontSize: 14, lineHeight: 20 },
-  indexStrip: { gap: 10, paddingRight: 18 },
-  indexCard: { minWidth: 170, padding: 15, borderRadius: 10, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, gap: 8 },
-  indexName: { color: COLORS.muted, fontSize: 12 },
-  indexValue: { color: COLORS.text, fontSize: 20, fontWeight: '700' },
-  list: { borderTopWidth: 1, borderColor: COLORS.border },
-  assetRow: { minHeight: 70, borderBottomWidth: 1, borderColor: COLORS.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingVertical: 12 },
-  assetIdentity: { flex: 1, gap: 4 },
-  symbol: { color: COLORS.text, fontWeight: '700', fontSize: 15 },
-  assetName: { color: COLORS.muted, fontSize: 12 },
-  assetValues: { alignItems: 'flex-end', gap: 5 },
-  price: { color: COLORS.text, fontSize: 14, fontVariant: ['tabular-nums'] },
-  change: { color: COLORS.accent, fontSize: 12, fontWeight: '600' },
-  negative: { color: COLORS.negative },
-  sectionTitle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
-  sectionHeading: { color: COLORS.text, fontSize: 18, fontWeight: '700' },
-  actionText: { color: COLORS.accent, fontSize: 13, fontWeight: '600' },
-  newsCard: { borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, backgroundColor: COLORS.surface, padding: 15, gap: 9 },
-  newsHeadline: { color: COLORS.text, fontSize: 16, lineHeight: 22, fontWeight: '700' },
-  newsSummary: { color: COLORS.muted, fontSize: 13, lineHeight: 19 },
-  searchInput: { height: 48, paddingHorizontal: 14, borderRadius: 9, color: COLORS.text, backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1 },
-  emptyText: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  bodyText: { color: COLORS.muted, fontSize: 15, lineHeight: 23 },
-  optionList: { gap: 10 },
-  option: { borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, padding: 15, borderRadius: 9, gap: 5 },
-  optionSelected: { borderColor: COLORS.accent },
-  optionTitle: { color: COLORS.text, fontSize: 15, fontWeight: '700' },
-  optionDescription: { color: COLORS.muted, fontSize: 13, lineHeight: 18 },
-  button: { minHeight: 48, borderRadius: 9, backgroundColor: COLORS.accent, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, marginTop: 4 },
-  buttonSecondary: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  buttonText: { color: COLORS.background, fontSize: 14, fontWeight: '700' },
-  buttonTextSecondary: { color: COLORS.text },
-  pressed: { opacity: 0.72 },
-  disabled: { opacity: 0.5 },
-  successText: { color: COLORS.accent, fontSize: 13 },
-  errorText: { color: COLORS.negative, fontSize: 13, lineHeight: 19, textAlign: 'center' },
-  detailSymbol: { color: COLORS.text, fontSize: 34, fontWeight: '800', marginBottom: -14 },
-  detailPrice: { color: COLORS.text, fontSize: 30, fontWeight: '700' },
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  stat: { width: '48%', minHeight: 72, borderRadius: 9, backgroundColor: COLORS.surface, padding: 12, gap: 7 },
-  statLabel: { color: COLORS.muted, fontSize: 11 },
-  statValue: { color: COLORS.text, fontSize: 14, fontWeight: '600' },
-  notice: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
-  newsTitle: { color: COLORS.text, fontSize: 27, fontWeight: '800', lineHeight: 33 },
-  loginPage: { flex: 1, justifyContent: 'center', padding: 26, gap: 16 },
-  brand: { color: COLORS.text, fontSize: 42, fontWeight: '800' },
-  brandAccent: { color: COLORS.accent },
-  loader: { marginTop: 8 },
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.background },
-  tabBar: { backgroundColor: COLORS.surface, borderTopColor: COLORS.border, height: 62, paddingTop: 6, paddingBottom: 6 },
-  tabLabel: { fontSize: 11, fontWeight: '600' },
-  header: { backgroundColor: COLORS.surface },
+  container: {
+    flex: 1,
+    backgroundColor: BACKGROUND,
+  },
+  safeArea: {
+    flex: 1,
+    backgroundColor: BACKGROUND,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  loading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  webView: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: BACKGROUND,
+  },
+  webViewSafeArea: {
+    flex: 1,
+    backgroundColor: '#0C1017',
+  },
+  webViewContainer: {
+    flex: 1,
+    backgroundColor: BACKGROUND,
+  },
+  authToolbar: {
+    minHeight: 64,
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    backgroundColor: '#0C1017',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#273142',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.18,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  headerBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 1,
+  },
+  headerBrandMark: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerBrandCopy: {
+    justifyContent: 'center',
+  },
+  headerBrandName: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.1,
+  },
+  headerBrandSubtitle: {
+    marginTop: 3,
+    color: '#8791A2',
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerIconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#293244',
+    backgroundColor: '#151B26',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  languageFlag: {
+    color: '#FFFFFF',
+    fontSize: 11,
+  },
+  profileTrigger: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#2D3342',
+    backgroundColor: '#111827',
+  },
+  profileAvatar: {
+    width: 38,
+    height: 38,
+  },
+  profileAvatarFallback: {
+    width: 38,
+    height: 38,
+    backgroundColor: '#00FF88',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileAvatarFallbackText: {
+    color: '#06110C',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  languageBackdrop: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(3, 4, 6, 0.72)',
+  },
+  languageModalContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  languageModalCard: {
+    width: '100%',
+    maxWidth: 340,
+    padding: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: BORDER,
+    backgroundColor: SURFACE_ALT,
+  },
+  languageModalTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  languageOption: {
+    minHeight: 44,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  languageOptionSelected: {
+    backgroundColor: '#00FF8817',
+  },
+  languageOptionText: {
+    color: '#E2E8F0',
+    fontSize: 14,
+  },
+  signOutButton: {
+    minHeight: 32,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2D3342',
+    backgroundColor: '#151821',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  signOutButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  signOutError: {
+    marginTop: 12,
+    color: '#EA3943',
+    fontSize: 12,
+  },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(3, 4, 6, 0.72)',
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#0F172A',
+    borderColor: '#243044',
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 12,
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#172236',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  userRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginTop: 8,
+    marginBottom: 18,
+  },
+  userAvatar: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 2,
+    borderColor: '#00FF88',
+  },
+  userAvatarFallback: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#00FF88',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  userAvatarFallbackText: {
+    color: '#08120A',
+    fontWeight: '700',
+    fontSize: 18,
+  },
+  userHeaderText: {
+    flex: 1,
+  },
+  userName: {
+    color: '#F8FAFC',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  userEmail: {
+    color: '#9FAAC2',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  statusCard: {
+    backgroundColor: '#111827',
+    borderColor: '#243044',
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 16,
+  },
+  statusLabel: {
+    color: '#8FA3B8',
+    fontSize: 11,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  statusText: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  activeMemberBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#00FF88',
+    gap: 6,
+  },
+  activeMemberBadgeText: {
+    color: '#08120A',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  primaryButton: {
+    marginTop: 16,
+    backgroundColor: '#00FF88',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  primaryButtonText: {
+    color: '#08120A',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  metricCard: {
+    marginTop: 18,
+    backgroundColor: '#0B1320',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#243044',
+    padding: 16,
+  },
+  metricTitle: {
+    color: '#9AA8BD',
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  metricValue: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  metricSubtitle: {
+    color: '#8FA3B8',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  feedbackButton: {
+    marginTop: 18,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#32415D',
+    backgroundColor: '#111827',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  feedbackButtonText: {
+    color: '#E5ECFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  feedbackForm: {
+    marginTop: 18,
+    borderRadius: 16,
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: '#243044',
+    padding: 14,
+  },
+  feedbackTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  starRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 12,
+    marginBottom: 12,
+    gap: 8,
+  },
+  starButton: {
+    padding: 2,
+  },
+  feedbackInput: {
+    minHeight: 90,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2E3A4D',
+    backgroundColor: '#09111C',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#F4F7FF',
+    textAlignVertical: 'top',
+  },
+  feedbackActions: {
+    marginTop: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  secondaryButton: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2E3A4D',
+    backgroundColor: '#0B1320',
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  secondaryButtonText: {
+    color: '#E5ECFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  submitButton: {
+    flex: 1,
+    borderRadius: 10,
+    backgroundColor: '#00FF88',
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  submitButtonDisabled: {
+    opacity: 0.7,
+  },
+  submitButtonText: {
+    color: '#08120A',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  profileSignOut: {
+    marginTop: 18,
+  },
+  loginContent: {
+    width: '100%',
+    maxWidth: 384,
+    alignSelf: 'center',
+    gap: 32,
+  },
+  brand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  brandMark: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: ACCENT,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.2,
+    shadowRadius: 11,
+    elevation: 5,
+  },
+  brandName: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  loginCard: {
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#202820',
+    borderRadius: 12,
+    backgroundColor: '#0D0D0D',
+  },
+  eyebrow: {
+    color: ACCENT,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+  },
+  title: {
+    color: '#FFFFFF',
+    marginTop: 8,
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    lineHeight: 30,
+  },
+  description: {
+    color: '#94A3B8',
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  googleButton: {
+    minHeight: 48,
+    marginTop: 24,
+    paddingHorizontal: 14,
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 11,
+  },
+  buttonPressed: {
+    opacity: 0.72,
+  },
+  googleMark: {
+    color: '#4285F4',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  googleButtonText: {
+    color: '#171717',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  disclaimer: {
+    color: '#64748B',
+    marginTop: 20,
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 16,
+  },
 });

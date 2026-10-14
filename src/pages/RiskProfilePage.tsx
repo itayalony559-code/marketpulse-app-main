@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, TrendingUp, Gauge, Target, ChevronRight, RotateCcw, Check } from 'lucide-react';
-import { getAsset } from '@/services/marketService';
+import { useLiveQuotes } from '@/hooks/useLiveQuotes';
 import { AssetRow } from '@/components/AssetRow';
 import { useLanguage } from '@/context/LanguageContext';
 import { useRiskProfile } from '@/context/RiskProfileContext';
@@ -119,7 +119,7 @@ function getRecommendedSymbols(level: RiskLevel): string[] {
     case 'moderate':
       return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'];
     case 'aggressive':
-      return ['NVDA', 'TSLA', 'AMD', 'COIN', 'PLTR'];
+      return ['MSTR', 'SMCI', 'HOOD', 'RIOT', 'COIN', 'PLTR'];
   }
 }
 
@@ -132,6 +132,8 @@ export function RiskProfilePage() {
   const [completed, setCompleted] = useState(Boolean(savedProfile));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const recommendationSymbols = savedProfile ? getRecommendedSymbols(savedProfile.level) : [];
+  const { assets: recommendedAssets, loading: recommendationsLoading } = useLiveQuotes(recommendationSymbols);
 
   useEffect(() => {
     if (savedProfile) setCompleted(true);
@@ -157,7 +159,7 @@ export function RiskProfilePage() {
       try {
         await saveProfile(profile);
       } catch (error) {
-        setSaveError(error instanceof Error ? error.message : 'Profile could not be saved to Supabase.');
+        setSaveError(error instanceof Error ? error.message : 'Your profile could not be saved.');
       } finally {
         setSaving(false);
       }
@@ -172,7 +174,7 @@ export function RiskProfilePage() {
     try {
       await clearProfile();
     } catch {
-      setSaveError(lang === 'he' ? 'לא ניתן למחוק את הפרופיל מ-Supabase.' : 'The Supabase profile could not be cleared.');
+      setSaveError(lang === 'he' ? 'לא ניתן למחוק את הפרופיל.' : 'Your profile could not be cleared.');
     }
   };
 
@@ -180,9 +182,7 @@ export function RiskProfilePage() {
     const level = savedProfile.level;
     const config = RISK_LEVELS[level];
     const Icon = config.icon;
-    const recommended = getRecommendedSymbols(level)
-      .map((s) => getAsset(s))
-      .filter((a): a is NonNullable<typeof a> => Boolean(a));
+    const recommended = recommendedAssets;
 
     return (
       <div className="space-y-5">
@@ -217,7 +217,7 @@ export function RiskProfilePage() {
             </span>
           </div>
           {saving && <p role="status" className="mt-3 text-xs text-slate-400">{lang === 'he' ? 'שומר פרופיל...' : 'Saving profile...'}</p>}
-          {saveError && <p role="alert" className="mt-3 text-xs text-bear">{lang === 'he' ? 'הפרופיל נשמר במכשיר אך לא ב-Supabase: ' : 'Saved on this device, but not in Supabase: '}{saveError}</p>}
+          {saveError && <p role="alert" className="mt-3 text-xs text-bear">{saveError}</p>}
         </div>
 
         <div>
@@ -227,10 +227,22 @@ export function RiskProfilePage() {
               {t('recommendedForYou')}
             </h2>
           </div>
+          {level === 'aggressive' && (
+            <p className="mb-2 text-xs leading-relaxed text-slate-500">
+              {lang === 'he'
+                ? 'רשימת מעקב תנודתית במיוחד: חשיפה לקריפטו, טכנולוגיה ופינטק. המחירים מתעדכנים בזמן אמת כשנתוני שוק זמינים.'
+                : 'High-volatility watchlist spanning crypto, technology, and fintech. Prices update live when market data is available.'}
+            </p>
+          )}
           <div className="surface divide-y divide-ink-700/40 overflow-hidden">
             {recommended.map((a) => (
               <AssetRow key={a.symbol} asset={a} />
             ))}
+            {recommendationsLoading && recommended.length === 0 && (
+              <p className="px-4 py-3 text-xs text-slate-500">
+                {lang === 'he' ? 'טוען נתוני שוק...' : 'Loading market data...'}
+              </p>
+            )}
           </div>
         </div>
 

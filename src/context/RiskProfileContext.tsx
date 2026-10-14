@@ -2,13 +2,11 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react';
 import type { RiskProfile, RiskProfileContextType } from '@/types';
-import { supabase } from '@/lib/supabase';
 
 const STORAGE_KEY = 'marketpulse_risk_profile';
 
@@ -36,77 +34,26 @@ function readStoredProfile(): RiskProfile | null {
 export function RiskProfileProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<RiskProfile | null>(readStoredProfile);
 
-  useEffect(() => {
-    let active = true;
-    async function loadProfile() {
-      if (!supabase) return;
-      const { data: { user }, error } = await supabase.auth.getUser();
-      if (error || !user) return;
-      const { data, error: profileError } = await supabase
-        .from('user_profiles')
-        .select('risk_level, risk_score, updated_at')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (!active || profileError || !data) return;
-
-      const remoteProfile: RiskProfile = {
-        score: data.risk_score,
-        level: data.risk_level,
-        updatedAt: data.updated_at,
-      };
-      setProfile(remoteProfile);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteProfile));
-      } catch {
-        // The Supabase profile remains available on the next visit.
-      }
-    }
-    void loadProfile().catch(() => undefined);
-    return () => { active = false; };
-  }, []);
-
   const saveProfile = useCallback(async (nextProfile: RiskProfile) => {
-    setProfile(nextProfile);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(nextProfile));
-    } catch {
-      // Supabase remains the durable store when browser storage is unavailable.
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? `Risk profile could not be saved locally: ${error.message}` : 'Risk profile could not be saved locally.',
+      );
     }
-
-    if (!supabase) throw new Error('Supabase is not configured.');
-
-    let { data: { user }, error } = await supabase.auth.getUser();
-    if (error || !user) {
-      const result = await supabase.auth.signInAnonymously();
-      user = result.data.user;
-      error = result.error;
-    }
-    if (error || !user) throw new Error(error?.message ?? 'Unable to create a profile session.');
-
-    const { error: saveError } = await supabase.from('user_profiles').upsert({
-      user_id: user.id,
-      risk_level: nextProfile.level,
-      risk_score: nextProfile.score,
-      updated_at: nextProfile.updatedAt,
-    });
-    if (saveError) throw new Error(saveError.message);
+    setProfile(nextProfile);
   }, []);
 
   const clearProfile = useCallback(async () => {
-    setProfile(null);
     try {
       localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // The in-memory profile is still cleared for this session.
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? `Risk profile could not be cleared locally: ${error.message}` : 'Risk profile could not be cleared locally.',
+      );
     }
-    if (!supabase) return;
-    const { data: { user }, error } = await supabase.auth.getUser();
-    if (error || !user) return;
-    const { error: deleteError } = await supabase
-      .from('user_profiles')
-      .delete()
-      .eq('user_id', user.id);
-    if (deleteError) throw new Error(deleteError.message);
+    setProfile(null);
   }, []);
 
   const value = useMemo(

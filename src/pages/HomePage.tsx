@@ -105,7 +105,7 @@ export function HomePage() {
         </div>
         {loading ? (
           <div className="flex gap-3 overflow-hidden">
-            {Array.from({ length: 4 }).map((_, i) => (
+            {Array.from({ length: 2 }).map((_, i) => (
               <div key={i} className="min-w-[180px] flex-1">
                 <CardSkeleton />
               </div>
@@ -113,7 +113,7 @@ export function HomePage() {
           </div>
         ) : (
           <div className="scrollbar-hide -mx-4 flex gap-3 overflow-x-auto px-4">
-            {indexes.map((idx) => (
+            {indexes.slice(0, 2).map((idx) => (
               <IndexCard key={idx.symbol} index={idx} />
             ))}
           </div>

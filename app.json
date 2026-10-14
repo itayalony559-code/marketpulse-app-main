@@ -3,9 +3,21 @@
     "name": "MarketPulse",
     "slug": "marketpulse-app",
     "scheme": "marketpulse",
+    "android": {
+      "usesCleartextTraffic": true
+    },
+    "ios": {
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoadsInWebContent": true
+        }
+      }
+    },
     "plugins": [
       "expo-notifications",
-      "expo-web-browser"
+      "expo-web-browser",
+      "@clerk/expo",
+      "expo-secure-store"
     ]
   }
 }

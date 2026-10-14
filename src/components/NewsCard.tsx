@@ -10,7 +10,7 @@ import type { NewsArticle } from '@/types';
 const RISK_TICKERS = {
   conservative: ['JPM', 'V', 'MSFT', 'AAPL'],
   moderate: ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'],
-  aggressive: ['NVDA', 'TSLA', 'AMD', 'COIN', 'PLTR'],
+  aggressive: ['MSTR', 'SMCI', 'HOOD', 'RIOT', 'COIN', 'PLTR'],
 };
 
 export function NewsCard({ article }: { article: NewsArticle }) {

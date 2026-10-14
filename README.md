@@ -2,17 +2,14 @@
 
 [![Open in Bolt](https://bolt.new/static/open-in-bolt.svg)](https://bolt.new/~/sb1-mvwmskmh)
 
-## Supabase setup
+## Environment
 
-This app supports Expo and Vite. Add these values to `.env` or `.env.local`:
+To enable live market data, add a Finnhub API key to `.env` or `.env.local`:
 
 ```env
-EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 EXPO_PUBLIC_FINNHUB_API_KEY=your-finnhub-api-key
 ```
 
-The app also accepts `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and
-`VITE_FINNHUB_API_KEY` as fallbacks for Vite deployments.
+Vite deployments can use `VITE_FINNHUB_API_KEY` as an alternative.
 
-Apply the migrations in `supabase/migrations`. In Supabase Authentication, enable the Google provider and add each app origin (local development and production) to the redirect URL allowlist. Existing anonymous risk-profile sessions can be linked to Google when anonymous sign-ins and manual identity linking are enabled. Risk profiles remain protected by row-level security. Deploy `send-premium-webhook` and set its `MAKE_WEBHOOK_URL` secret before expecting webhook delivery. The upgrade screen currently simulates checkout and does not process a real payment.
+The upgrade screen simulates premium activation and does not process a real payment.

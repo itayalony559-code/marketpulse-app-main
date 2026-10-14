@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Crown, Sparkles, ArrowLeft, Loader2 } from 'lucide-react';
+import { Check, Crown, Sparkles, ArrowLeft } from 'lucide-react';
 import { useSubscription } from '@/context/SubscriptionContext';
 import { useLanguage } from '@/context/LanguageContext';
 import type { TranslationKey } from '@/i18n/translations';
@@ -10,10 +10,8 @@ export function UpgradePage() {
   const navigate = useNavigate();
   const { isPremium, activatePremium } = useSubscription();
   const { t, lang } = useLanguage();
-  const [email, setEmail] = useState('');
-  const [processing, setProcessing] = useState(false);
   const [plan, setPlan] = useState<'Monthly' | 'Yearly'>('Monthly');
-  const [webhookDelivered, setWebhookDelivered] = useState<boolean | null>(null);
+  const [activationComplete, setActivationComplete] = useState(false);
 
   const freeFeatures: TranslationKey[] = [
     'basicMarketData',
@@ -32,12 +30,9 @@ export function UpgradePage() {
     'premiumMarketInsights',
   ];
 
-  const handleUpgrade = async () => {
-    setProcessing(true);
-    setWebhookDelivered(null);
-    const delivered = await activatePremium(email.trim() || 'guest@marketpulse.app', plan);
-    setWebhookDelivered(delivered);
-    setProcessing(false);
+  const handleUpgrade = () => {
+    activatePremium();
+    setActivationComplete(true);
   };
 
   return (
@@ -129,36 +124,23 @@ export function UpgradePage() {
                   </button>
                 ))}
               </div>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="your@email.com"
-                className="w-full rounded-lg border border-ink-700 bg-ink-850 px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none transition-colors focus:border-gold-500/50"
-                aria-label="Email address"
-              />
               <button
                 onClick={handleUpgrade}
-                disabled={processing}
                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-gold-400 to-gold-500 py-3 text-sm font-bold text-ink-950 shadow-lg shadow-gold-500/20 transition-all hover:from-gold-500 hover:to-gold-600 hover:shadow-gold-500/30 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {processing ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Crown className="h-4 w-4" />
-                )}
-                {processing ? t('processing') : t('upgradeToPremium')}
+                <Crown className="h-4 w-4" />
+                {t('upgradeToPremium')}
               </button>
             </div>
           )}
-          {webhookDelivered !== null && (
+          {activationComplete && (
             <p
-              role={webhookDelivered ? 'status' : 'alert'}
-              className={`mt-3 rounded-lg border px-3 py-2 text-xs ${webhookDelivered ? 'border-bull/30 bg-bull/10 text-bull' : 'border-gold-500/30 bg-gold-500/10 text-gold-300'}`}
+              role="status"
+              className="mt-3 rounded-lg border border-gold-500/30 bg-gold-500/10 px-3 py-2 text-xs text-gold-300"
             >
-              {webhookDelivered
-                ? lang === 'he' ? 'הפרימיום הופעל והעדכון נשלח.' : 'Premium is active and the subscription webhook was delivered.'
-                : lang === 'he' ? 'הפרימיום הופעל, אך שליחת העדכון נכשלה.' : 'Premium is active, but the subscription webhook could not be delivered.'}
+              {lang === 'he'
+                ? 'הפרימיום הופעל בהדמיה. לא בוצע חיוב.'
+                : 'Premium was activated in the demo. No payment was processed.'}
             </p>
           )}
         </div>
